@@ -35,9 +35,14 @@ export interface DiscordInteractionLike {
   editReply?(options: { content: string; components?: DiscordActionRowComponentV2[] }): Promise<unknown>
 }
 
+export type OnApproveCallback = (channelId: string, runId: string, actorUserId: string | null) => Promise<void>
+export type OnRejectCallback = (channelId: string, runId: string, actorUserId: string | null) => Promise<void>
+
 interface DiscordInteractionRouterOptions {
   threadRunStore?: ThreadRunStore
   allowedChannelIds?: string[]
+  onApprove?: OnApproveCallback
+  onReject?: OnRejectCallback
   logger?: {
     info(message: string): void
     warn(message: string): void
@@ -61,9 +66,14 @@ export class DiscordInteractionRouter {
     warn(message: string): void
   }
 
+  private readonly onApprove?: OnApproveCallback
+  private readonly onReject?: OnRejectCallback
+
   constructor(options: DiscordInteractionRouterOptions = {}) {
     this.threadRunStore = options.threadRunStore ?? new ThreadRunStore()
     this.allowedChannelIds = new Set((options.allowedChannelIds ?? []).filter(Boolean))
+    this.onApprove = options.onApprove
+    this.onReject = options.onReject
     this.logger = options.logger ?? console
   }
 
@@ -118,12 +128,23 @@ export class DiscordInteractionRouter {
     )
     await respondEphemeral(
       interaction,
-      `Recorded ${updated.status} for ${updated.runId}/${updated.stepId}.`,
+      `✅ ${decision === "approve" ? "Approved" : "Rejected"} — ${updated.runId}. Processing...`,
       buildWorkflowActionRows({
         threadId: channelId,
         runId: parsed.runId,
       }),
     )
+
+    // Fire post-decision callback
+    try {
+      if (decision === "approve" && this.onApprove) {
+        await this.onApprove(channelId, parsed.runId, actorUserId)
+      } else if (decision === "reject" && this.onReject) {
+        await this.onReject(channelId, parsed.runId, actorUserId)
+      }
+    } catch (err) {
+      this.logger.warn(`[discord] post-decision callback failed: ${err}`)
+    }
   }
 
   private async replyStatus(

@@ -85,12 +85,6 @@ export async function createDiscordBot(
   const threadRunStore = deps.threadRunStore ?? new ThreadRunStore()
   const requirementsFlow = deps.requirementsFlow ?? new RequirementsFlow()
   const voiceService = deps.voiceService ?? new DiscordVoiceService()
-  const interactionRouter = new DiscordInteractionRouter({
-    threadRunStore,
-    allowedChannelIds,
-    logger,
-  })
-
   const discordModuleName = "discord.js"
   const discord = await import(discordModuleName)
   const Client = (discord as { Client?: new (config: unknown) => DiscordJsClientLike }).Client
@@ -101,6 +95,37 @@ export async function createDiscordBot(
   const intents = buildIntents(discord as Record<string, unknown>)
   const partials = buildPartials(discord as Record<string, unknown>)
   const client = new Client({ intents, partials })
+
+  /** Send a visible message to a channel/thread by ID */
+  async function sendToChannel(channelId: string, content: string): Promise<void> {
+    try {
+      const channel = await (client as any).channels?.fetch(channelId)
+      if (channel && typeof channel.send === "function") {
+        // Split long messages
+        const chunks = splitMessage(content, 1900)
+        for (const chunk of chunks) {
+          await channel.send(chunk)
+        }
+      }
+    } catch (err) {
+      logger.error(`[discord-bot] failed to send to channel ${channelId}`, err)
+    }
+  }
+
+  const interactionRouter = new DiscordInteractionRouter({
+    threadRunStore,
+    allowedChannelIds,
+    logger,
+    async onApprove(channelId, runId, _actorUserId) {
+      const summary = requirementsFlow.buildSummary(channelId, runId)
+      const prd = formatPRD(runId, summary)
+      await sendToChannel(channelId, prd)
+      await sendToChannel(channelId, `🚀 **PRD approved and locked.** Next step: build phase.\n\nTo proceed, the build agent will use this PRD as its specification. The implementation will be tracked in this thread.`)
+    },
+    async onReject(channelId, runId, _actorUserId) {
+      await sendToChannel(channelId, `❌ **PRD rejected.** Use \`/requirements\` to start a new interview, or continue discussing changes in this thread.`)
+    },
+  })
 
   let running = false
 
@@ -466,6 +491,10 @@ async function safeInteractionErrorReply(interaction: DiscordInteractionLike): P
 
 function formatInterviewPrompt(phase: string, question: string): string {
   return `Interview phase ${phase}\n${question}`
+}
+
+function formatPRD(runId: string, summary: string): string {
+  return `📋 **Product Requirements Document — \`${runId}\`**\n\n${summary}\n\n---\n*Generated from requirements interview. This is the locked specification for the build phase.*`
 }
 
 /** Split a message into chunks that fit Discord's 2000-char limit. */
