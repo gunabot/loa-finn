@@ -86,16 +86,18 @@ export class DiscordInteractionRouter {
       return true
     }
 
-    // MVP: allow all channels (threads have different IDs from parent)
-    // TODO: resolve parent channel ID for threads before checking allowlist
-    if (false && this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(fallbackChannelId)) {
-      await respondEphemeral(interaction, "This channel is not enabled for workflow controls.")
-      return true
-    }
-
     const parsed = parseWorkflowAction(interaction.customId)
     if (!parsed) return false
     const threadId = parsed.threadId ?? fallbackChannelId
+
+    // Allow either explicitly configured channel IDs or known run threads.
+    if (this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(fallbackChannelId)) {
+      const knownRunRows = this.threadRunStore.listRun(threadId, parsed.runId)
+      if (knownRunRows.length === 0) {
+        await respondEphemeral(interaction, "This channel is not enabled for workflow controls.")
+        return true
+      }
+    }
 
     if (parsed.action === "status") {
       await this.replyStatus(interaction, threadId, parsed)
@@ -239,6 +241,7 @@ function parseWorkflowAction(customId: string): ParsedWorkflowAction | null {
 interface InteractionReplyOptions {
   content: string
   ephemeral?: boolean
+  flags?: number[]
   components?: DiscordActionRowComponentV2[]
 }
 
@@ -248,12 +251,12 @@ async function respondEphemeral(
   components?: DiscordActionRowComponentV2[],
 ): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, flags: [1 << 6], components })
+    await interaction.followUp({ content, ephemeral: true, components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
     await interaction.editReply({ content, components })
     return
   }
-  await interaction.reply({ content, flags: [1 << 6], components })
+  await interaction.reply({ content, ephemeral: true, components })
 }

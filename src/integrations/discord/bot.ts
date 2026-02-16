@@ -6,6 +6,7 @@ import { RUN_LEVEL_GATE_STEP_ID, ThreadRunStore } from "../../gateway/thread-run
 import { RequirementsFlow } from "../../interview/requirements-flow.js"
 import { buildWorkflowActionRows } from "./components.js"
 import { DiscordInteractionRouter } from "./interaction-router.js"
+import { DiscordProjectRuntime } from "./project-runtime.js"
 import { DiscordVoiceService } from "./voice.js"
 
 export interface DiscordBotLogger {
@@ -17,6 +18,7 @@ export interface DiscordBotLogger {
 export interface DiscordBotDeps {
   threadRunStore?: ThreadRunStore
   requirementsFlow?: RequirementsFlow
+  projectRuntime?: DiscordProjectRuntime
   voiceService?: DiscordVoiceService
   logger?: DiscordBotLogger
 }
@@ -33,6 +35,9 @@ interface DiscordJsClientLike {
   destroy(): void
   guilds?: {
     fetch(guildId: string): Promise<{ id?: string; name?: string }>
+  }
+  channels?: {
+    fetch(channelId: string): Promise<unknown>
   }
   user?: {
     tag?: string
@@ -58,6 +63,11 @@ interface DiscordInteractionLike {
   reply?(options: { content: string; ephemeral?: boolean; components?: unknown[] }): Promise<unknown>
   followUp?(options: { content: string; ephemeral?: boolean; components?: unknown[] }): Promise<unknown>
   editReply?(options: { content: string; components?: unknown[] }): Promise<unknown>
+  fetchReply?(): Promise<{ startThread?: (options: { name: string; autoArchiveDuration: number }) => Promise<{ id?: string; send?: (options: { content: string; components?: unknown[] } | string) => Promise<unknown> }> }>
+}
+
+interface DiscordThreadStarterLike {
+  startThread?(options: { name: string; autoArchiveDuration: number }): Promise<{ id?: string }>
 }
 
 export async function createDiscordBot(
@@ -84,7 +94,11 @@ export async function createDiscordBot(
 
   const threadRunStore = deps.threadRunStore ?? new ThreadRunStore()
   const requirementsFlow = deps.requirementsFlow ?? new RequirementsFlow()
+  const projectRuntime = deps.projectRuntime ?? new DiscordProjectRuntime({ logger })
   const voiceService = deps.voiceService ?? new DiscordVoiceService()
+  const activeBuilds = new Set<string>()
+  const threadRunIndex = new Map<string, string>()
+
   const discordModuleName = "discord.js"
   const discord = await import(discordModuleName)
   const Client = (discord as { Client?: new (config: unknown) => DiscordJsClientLike }).Client
@@ -96,15 +110,18 @@ export async function createDiscordBot(
   const partials = buildPartials(discord as Record<string, unknown>)
   const client = new Client({ intents, partials })
 
-  /** Send a visible message to a channel/thread by ID */
-  async function sendToChannel(channelId: string, content: string): Promise<void> {
+  async function sendToChannel(channelId: string, content: string, components?: unknown[]): Promise<void> {
     try {
-      const channel = await (client as any).channels?.fetch(channelId)
-      if (channel && typeof channel.send === "function") {
-        // Split long messages
-        const chunks = splitMessage(content, 1900)
-        for (const chunk of chunks) {
-          await channel.send(chunk)
+      const channel = await client.channels?.fetch(channelId)
+      if (!channel || typeof (channel as { send?: unknown }).send !== "function") return
+
+      const send = (channel as { send: (payload: { content: string; components?: unknown[] } | string) => Promise<unknown> }).send
+      const chunks = splitMessage(content, 1900)
+      for (let i = 0; i < chunks.length; i++) {
+        if (i === 0 && components && components.length > 0) {
+          await send({ content: chunks[i], components })
+        } else {
+          await send(chunks[i])
         }
       }
     } catch (err) {
@@ -112,18 +129,184 @@ export async function createDiscordBot(
     }
   }
 
+  async function startInterviewInThread(threadId: string, runId: string): Promise<void> {
+    threadRunIndex.set(threadId, runId)
+    threadRunStore.touchPending({
+      threadId,
+      runId,
+      stepId: RUN_LEVEL_GATE_STEP_ID,
+    })
+    await projectRuntime.ensureProject(runId, threadId)
+
+    const prompt = requirementsFlow.start(threadId, runId)
+    await projectRuntime.persistInterview(
+      runId,
+      threadId,
+      requirementsFlow.listAnswers(threadId, runId),
+      false,
+    )
+
+    await sendToChannel(
+      threadId,
+      [
+        `Interview started for \`${runId}\`.`,
+        "Reply naturally in this thread. I will ask one focused question at a time.",
+        "",
+        formatInterviewPrompt(prompt.phase, prompt.question),
+      ].join("\n"),
+    )
+  }
+
+  async function createInterviewThread(
+    parentChannelId: string,
+    threadName: string,
+    reply?: DiscordThreadStarterLike,
+  ): Promise<string> {
+    try {
+      const channel = await client.channels?.fetch(parentChannelId)
+      const threads = (channel as {
+        threads?: {
+          create?: (options: { name: string; autoArchiveDuration: number; reason?: string }) => Promise<{ id?: string }>
+        }
+      }).threads
+      if (threads && typeof threads.create === "function") {
+        const thread = await threads.create({
+          name: threadName,
+          autoArchiveDuration: 1440,
+          reason: "Finn requirements interview",
+        })
+        if (thread.id) return thread.id
+      }
+    } catch (err) {
+      logger.warn(`[discord-bot] channel thread creation failed, trying reply thread fallback: ${err}`)
+    }
+
+    try {
+      if (reply?.startThread) {
+        const thread = await reply.startThread({
+          name: threadName,
+          autoArchiveDuration: 1440,
+        })
+        if (thread.id) return thread.id
+      }
+    } catch (err) {
+      logger.warn(`[discord-bot] reply thread creation failed, using channel fallback: ${err}`)
+    }
+
+    return parentChannelId
+  }
+
+  function resolveRunIdForChannel(channelId: string): string | null {
+    const activeRunId = requirementsFlow.findActiveRunId(channelId)
+    if (activeRunId) return activeRunId
+
+    const indexedRunId = threadRunIndex.get(channelId)
+    if (indexedRunId) return indexedRunId
+
+    const runIds = threadRunStore.listThreadRunIds(channelId)
+    if (runIds.length > 0) return runIds[0]
+    return null
+  }
+
+  function isProcessableChannel(channelId: string | null): boolean {
+    if (!channelId) return false
+    if (allowedChannelIds.length === 0) return true
+    if (allowedChannelIds.includes(channelId)) return true
+    if (threadRunIndex.has(channelId)) return true
+    if (requirementsFlow.findActiveRunId(channelId)) return true
+    return threadRunStore.hasThread(channelId)
+  }
+
+  async function maybeStartBuild(channelId: string, runId: string): Promise<void> {
+    if (activeBuilds.has(runId)) {
+      await sendToChannel(channelId, `Build already running for \`${runId}\`.`)
+      return
+    }
+    activeBuilds.add(runId)
+
+    try {
+      const { prdPath, content } = await projectRuntime.generatePrd(runId, channelId)
+      await sendToChannel(channelId, `PRD generated at \`${prdPath}\`.`)
+      await sendToChannel(channelId, renderPrdPreview(content))
+
+      await projectRuntime.startBuild({
+        runId,
+        threadId: channelId,
+        prdPath,
+        onEvent: async (event) => {
+          if (event.type === "progress") {
+            await sendToChannel(channelId, `Build update:\n\n${event.message}`)
+            return
+          }
+          await sendToChannel(channelId, event.message)
+        },
+      })
+
+      const controls = buildWorkflowActionRows({ threadId: channelId, runId })
+      await sendToChannel(
+        channelId,
+        "Build finished. Review output in the project folder and approve/reject in this thread.",
+        controls,
+      )
+    } catch (err) {
+      logger.error(`[discord-bot] build pipeline failed for ${runId}`, err)
+      await sendToChannel(channelId, `Build pipeline failed for \`${runId}\`. Check runtime logs.`)
+    } finally {
+      activeBuilds.delete(runId)
+    }
+  }
+
   const interactionRouter = new DiscordInteractionRouter({
     threadRunStore,
     allowedChannelIds,
     logger,
-    async onApprove(channelId, runId, _actorUserId) {
-      const summary = requirementsFlow.buildSummary(channelId, runId)
-      const prd = formatPRD(runId, summary)
-      await sendToChannel(channelId, prd)
-      await sendToChannel(channelId, `🚀 **PRD approved and locked.** Next step: build phase.\n\nTo proceed, the build agent will use this PRD as its specification. The implementation will be tracked in this thread.`)
+    async onApprove(channelId, runId, actorUserId) {
+      threadRunIndex.set(channelId, runId)
+      const state = await projectRuntime.readState(runId) ?? await projectRuntime.ensureProject(runId, channelId)
+
+      if (state.status === "interview_active") {
+        await sendToChannel(
+          channelId,
+          `Run \`${runId}\` interview is still active. Complete all interview phases before approval.`,
+        )
+        return
+      }
+
+      if (state.status === "awaiting_review") {
+        await projectRuntime.markReviewApproved(
+          runId,
+          channelId,
+          `Review approved by ${actorUserId ?? "unknown"}`,
+        )
+        await sendToChannel(channelId, `Review approved for \`${runId}\`. Marked complete.`)
+        return
+      }
+
+      if (state.status === "building") {
+        await sendToChannel(channelId, `Build is already in progress for \`${runId}\`.`)
+        return
+      }
+
+      if (state.status === "completed") {
+        await sendToChannel(channelId, `Run \`${runId}\` is already completed.`)
+        return
+      }
+
+      void maybeStartBuild(channelId, runId)
     },
-    async onReject(channelId, runId, _actorUserId) {
-      await sendToChannel(channelId, `❌ **PRD rejected.** Use \`/requirements\` to start a new interview, or continue discussing changes in this thread.`)
+    async onReject(channelId, runId, actorUserId) {
+      await projectRuntime.markRejected(
+        runId,
+        channelId,
+        `Rejected by ${actorUserId ?? "unknown"}`,
+      )
+      await sendToChannel(
+        channelId,
+        [
+          `Run \`${runId}\` marked rejected.`,
+          "You can continue discussing requirements in this thread, then approve when ready.",
+        ].join("\n"),
+      )
     },
   })
 
@@ -144,7 +327,7 @@ export async function createDiscordBot(
             {
               name: "project",
               description: "Project name (used as run ID)",
-              type: 3, // STRING
+              type: 3,
               required: false,
             },
           ],
@@ -186,22 +369,26 @@ export async function createDiscordBot(
     const interaction = rawInteraction as DiscordInteractionLike
     try {
       const channelId = interaction.channelId ?? null
-      logger.info(`[discord-bot] interaction received: channel=${channelId} isButton=${interaction.isButton?.()} isCommand=${interaction.isChatInputCommand?.()} commandName=${(interaction as any).commandName}`)
-      if (!isAllowedChannel(channelId, allowedChannelIds)) {
-        logger.warn(`[discord-bot] channel ${channelId} not allowed`)
-        return
-      }
+      if (!isProcessableChannel(channelId)) return
 
       const handled = await interactionRouter.routeInteraction(interaction)
       if (handled) return
 
       if (interaction.isChatInputCommand?.() && interaction.commandName === "status") {
-        const runId = deriveRunIdFromChannel(channelId)
-        const summary = threadRunStore.summarizeRun(channelId!, runId)
+        if (!channelId) {
+          await replyEphemeral(interaction, "No channel context available.")
+          return
+        }
+        const runId = resolveRunIdForChannel(channelId)
+        if (!runId) {
+          await replyEphemeral(interaction, "No workflow run found for this channel yet.")
+          return
+        }
+        const summary = threadRunStore.summarizeRun(channelId, runId)
         await replyEphemeral(
           interaction,
           `Run ${runId}: approved=${summary.approved}, rejected=${summary.rejected}, pending=${summary.pending}.`,
-          buildWorkflowActionRows({ threadId: channelId!, runId }),
+          buildWorkflowActionRows({ threadId: channelId, runId }),
         )
         return
       }
@@ -209,63 +396,30 @@ export async function createDiscordBot(
       if (interaction.isChatInputCommand?.() && interaction.commandName === "requirements") {
         const projectName = interaction.options?.getString("project", false)
         const runId = projectName
-          ? projectName.replace(/\s+/g, "-").toLowerCase()
+          ? slugifyRunId(projectName)
           : `project-${Date.now()}`
+
         if (!channelId) {
           await replyEphemeral(interaction, "Could not determine channel context.")
           return
         }
 
-        // Reply first so we have a message to create a thread from
-        if (typeof interaction.reply === "function") {
-          await interaction.reply({
-            content: `🚀 **Starting requirements interview** for \`${runId}\``,
-          })
-        }
+        // Acknowledge command first.
+        await interaction.reply?.({
+          content: `Starting requirements interview for \`${runId}\`...`,
+          ephemeral: true,
+        })
 
-        // Create a thread from the reply message
-        try {
-          const reply = await (interaction as any).fetchReply?.()
-          if (reply && typeof reply.startThread === "function") {
-            const thread = await reply.startThread({
-              name: `📋 ${projectName || runId}`,
-              autoArchiveDuration: 1440, // 24h
-            })
-            const threadId = thread.id ?? channelId
+        const reply = await interaction.fetchReply?.()
+        const targetThreadId = await createInterviewThread(
+          channelId,
+          `📋 ${projectName || runId}`,
+          reply,
+        )
 
-            threadRunStore.touchPending({
-              threadId,
-              runId,
-              stepId: RUN_LEVEL_GATE_STEP_ID,
-            })
-            const prompt = requirementsFlow.start(threadId, runId)
-            await thread.send(`**${prompt.phase}**\n${prompt.question}`)
-            logger.info(`[discord-bot] created interview thread ${threadId} for ${runId}`)
-          } else {
-            // Fallback: no thread, run in channel
-            threadRunStore.touchPending({
-              threadId: channelId,
-              runId,
-              stepId: RUN_LEVEL_GATE_STEP_ID,
-            })
-            const prompt = requirementsFlow.start(channelId, runId)
-            const fetchedReply = await (interaction as any).followUp?.({
-              content: `**${prompt.phase}**\n${prompt.question}`,
-            })
-            logger.info(`[discord-bot] fallback: interview in channel ${channelId} for ${runId}`)
-          }
-        } catch (threadErr) {
-          logger.error("[discord-bot] failed to create interview thread", threadErr)
-          // Still start interview in channel as fallback
-          threadRunStore.touchPending({
-            threadId: channelId,
-            runId,
-            stepId: RUN_LEVEL_GATE_STEP_ID,
-          })
-          const prompt = requirementsFlow.start(channelId, runId)
-          await (interaction as any).followUp?.({
-            content: `**${prompt.phase}**\n${prompt.question}`,
-          })
+        await startInterviewInThread(targetThreadId, runId)
+        if (targetThreadId !== channelId) {
+          await replyEphemeral(interaction, `Interview thread ready: <#${targetThreadId}>`)
         }
       }
     } catch (error) {
@@ -280,55 +434,53 @@ export async function createDiscordBot(
       if (message.author?.bot) return
 
       const channelId = message.channelId ?? null
-      if (!isAllowedChannel(channelId, allowedChannelIds)) return
+      if (!isProcessableChannel(channelId)) return
       if (!channelId) return
 
       await handleVoiceAttachments(message, voiceService)
 
-      // In an active interview thread, treat any message as an interview answer
+      const text = (message.content ?? "").trim()
+      if (!text) return
+
       const activeRunId = requirementsFlow.findActiveRunId(channelId)
-      
-      if (activeRunId && (message.content ?? "").trim()) {
-        const answerText = (message.content ?? "").trim()
-        const result = requirementsFlow.answer(channelId, activeRunId, answerText)
-        if (!result.accepted) {
-          await message.reply?.({ content: "I need a bit more detail — could you elaborate?" })
-          return
+      if (!activeRunId) return
+
+      const result = requirementsFlow.answer(channelId, activeRunId, text)
+      if (!result.accepted) {
+        await message.reply?.({ content: "Please provide a little more detail so I can capture this requirement." })
+        return
+      }
+
+      await projectRuntime.persistInterview(
+        activeRunId,
+        channelId,
+        requirementsFlow.listAnswers(channelId, activeRunId),
+        result.completed,
+      )
+
+      if (result.completed) {
+        const summary = requirementsFlow.buildSummary(channelId, activeRunId)
+        for (const chunk of splitMessage(`Draft PRD summary:\n\n${summary}`, 1900)) {
+          await message.reply?.({ content: chunk })
         }
-        if (result.completed) {
-          const summary = requirementsFlow.buildSummary(channelId, activeRunId)
-          // Split summary into Discord-safe chunks (max 2000 chars)
-          const chunks = splitMessage(summary, 1900)
-          for (const chunk of chunks) {
-            await message.reply?.({ content: chunk })
-          }
-          // Final message with gate buttons
-          const workflowControls = buildWorkflowActionRows({
-            threadId: channelId,
-            runId: activeRunId,
-          })
-          await message.reply?.({
-            content: `✅ **Interview complete!** Review the summary above, then use the buttons to approve the PRD or request changes.`,
-            components: workflowControls,
-          })
-          return
+        await message.reply?.({
+          content: "Interview complete. Approve to lock PRD and start build, or reject to refine requirements.",
+          components: buildWorkflowActionRows({ threadId: channelId, runId: activeRunId }),
+        })
+        return
+      }
+
+      if (result.prompt?.phase === "SUMMARY") {
+        const draftSummary = requirementsFlow.buildSummary(channelId, activeRunId)
+        for (const chunk of splitMessage(`Current summary:\n\n${draftSummary}`, 1900)) {
+          await message.reply?.({ content: chunk })
         }
-        // When entering SUMMARY phase, show the draft summary before the question
-        if (result.prompt!.phase === "SUMMARY") {
-          const draftSummary = requirementsFlow.buildSummary(channelId, activeRunId)
-          const fullText = `📝 **Draft Summary**\n\n${draftSummary}`
-          const chunks = splitMessage(fullText, 1900)
-          for (const chunk of chunks) {
-            await message.reply?.({ content: chunk })
-          }
-          await message.reply?.({
-            content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
-          })
-        } else {
-          await message.reply?.({
-            content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
-          })
-        }
+      }
+
+      if (result.prompt) {
+        await message.reply?.({
+          content: formatInterviewPrompt(result.prompt.phase, result.prompt.question),
+        })
       }
     } catch (error) {
       logger.error("[discord-bot] messageCreate handler failed", error)
@@ -382,12 +534,6 @@ function parseAllowedChannelIds(...rawValues: Array<string | undefined>): string
   return output
 }
 
-function isAllowedChannel(_channelId: string | null, _allowedChannelIds: string[]): boolean {
-  // MVP: allow all channels in the guild. The bot only joins one server.
-  // TODO: re-enable allowlist with parent-channel resolution for threads.
-  return _channelId !== null
-}
-
 function buildIntents(discord: Record<string, unknown>): number[] {
   const bits = discord.GatewayIntentBits as Record<string, number> | undefined
   if (!bits) return []
@@ -404,20 +550,9 @@ function buildPartials(discord: Record<string, unknown>): number[] {
   return [partials.Channel].filter((value): value is number => typeof value === "number")
 }
 
-function deriveRunIdFromChannel(channelId: string | null): string {
-  return channelId ? `run-${channelId}` : "run-unknown"
-}
-
-function parseRunIdFromText(content: string): string | null {
-  const match = content.match(/\brun[_-]?id[:= ]+([a-zA-Z0-9._-]+)/i)
-  return match?.[1] ?? null
-}
-
-function extractAnswerText(content: string): string {
-  const marker = "!requirements answer"
-  const idx = content.toLowerCase().indexOf(marker)
-  if (idx < 0) return content
-  return content.slice(idx + marker.length).trim()
+function slugifyRunId(value: string): string {
+  const slug = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-")
+  return slug.length > 0 ? slug : `project-${Date.now()}`
 }
 
 async function handleVoiceAttachments(
@@ -429,7 +564,7 @@ async function handleVoiceAttachments(
     if (!voiceService.isAudioAttachment(attachment)) continue
     const transcription = await voiceService.transcribeAttachment(attachment)
     await message.reply?.({
-      content: `[voice] ${transcription.transcript} (${transcription.code})`,
+      content: `[voice optional] ${transcription.transcript}`,
     })
   }
 }
@@ -469,7 +604,7 @@ async function replyEphemeral(
   components?: unknown[],
 ): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, flags: [1 << 6], components })
+    await interaction.followUp({ content, ephemeral: true, components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
@@ -477,7 +612,7 @@ async function replyEphemeral(
     return
   }
   if (typeof interaction.reply === "function") {
-    await interaction.reply({ content, flags: [1 << 6], components })
+    await interaction.reply({ content, ephemeral: true, components })
   }
 }
 
@@ -490,14 +625,14 @@ async function safeInteractionErrorReply(interaction: DiscordInteractionLike): P
 }
 
 function formatInterviewPrompt(phase: string, question: string): string {
-  return `Interview phase ${phase}\n${question}`
+  return [`Interview phase: **${phase}**`, question].join("\n")
 }
 
-function formatPRD(runId: string, summary: string): string {
-  return `📋 **Product Requirements Document — \`${runId}\`**\n\n${summary}\n\n---\n*Generated from requirements interview. This is the locked specification for the build phase.*`
+function renderPrdPreview(prdContent: string): string {
+  const preview = prdContent.split("\n").slice(0, 40).join("\n")
+  return `PRD preview:\n\n${preview}`
 }
 
-/** Split a message into chunks that fit Discord's 2000-char limit. */
 function splitMessage(text: string, maxLen: number): string[] {
   if (text.length <= maxLen) return [text]
   const chunks: string[] = []
@@ -507,9 +642,8 @@ function splitMessage(text: string, maxLen: number): string[] {
       chunks.push(remaining)
       break
     }
-    // Try to split at a newline
     let splitAt = remaining.lastIndexOf("\n", maxLen)
-    if (splitAt < maxLen * 0.5) splitAt = maxLen // no good newline, hard cut
+    if (splitAt < maxLen * 0.5) splitAt = maxLen
     chunks.push(remaining.slice(0, splitAt))
     remaining = remaining.slice(splitAt).replace(/^\n/, "")
   }

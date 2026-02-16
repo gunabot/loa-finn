@@ -5,6 +5,7 @@ This runtime supports driving Finn from a Discord thread with:
 - workflow gate buttons (`Approve`, `Reject`, `Status`)
 - thread-scoped requirements interview prompts
 - in-memory gate status persistence keyed by `threadId + runId`
+- disk-backed project workspace persistence at `projects/<run-id>/`
 
 ## API Notes
 
@@ -28,6 +29,29 @@ This runtime supports driving Finn from a Discord thread with:
 - Discord webhook bridge (`src/gateway/discord-bridge.ts`)
 - Discord bot interaction router (`src/integrations/discord/interaction-router.ts`)
 - Run-level decisions from v2 IDs are stored under step id `__run_gate__`.
+- Interview and build lifecycle state is persisted on disk via `DiscordProjectRuntime`:
+- `projects/<run-id>/state.json`
+- `projects/<run-id>/interview.json`
+- `projects/<run-id>/PRD.md`
+- `projects/<run-id>/build.log`
+
+### Build orchestration
+
+- On PRD approval, Finn generates `PRD.md` from interview answers.
+- Finn then spawns a build command in the project directory.
+- Default behavior:
+- if `codex` exists on `PATH`, run it against the generated PRD.
+- otherwise write a placeholder artifact and report that codex is missing.
+- You can override build behavior with `DISCORD_BUILD_COMMAND` using placeholders:
+- `{RUN_ID}`, `{PROJECT_DIR}`, `{PRD_PATH}`
+
+### Thread progress updates
+
+- Build lifecycle updates are posted back to the same Discord thread:
+- start notification
+- periodic buffered stdout/stderr progress
+- completion or failure summary
+- final review gate message with approve/reject/status buttons
 
 ## Interview UX Notes
 

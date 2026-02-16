@@ -44,7 +44,7 @@ test("approve action updates thread-run-store and replies ephemerally", async ()
   const handled = await router.routeInteraction(interaction)
   assert.equal(handled, true)
   assert.equal(replies.length, 1)
-  assert.equal(replies[0].flags[0], 64)
+  assert.equal(replies[0].ephemeral, true)
   assert.ok(replies[0].content.includes("Approved"))
   assert.ok(Array.isArray(replies[0].components))
 
@@ -142,8 +142,7 @@ test("disallowed channel is blocked with ephemeral response", async () => {
   const handled = await router.routeInteraction(interaction)
   assert.equal(handled, true)
   assert.equal(replies.length, 1)
-  // allowlist disabled for MVP
-assert.ok(replies[0].content.includes("Approved"))
+  assert.ok(replies[0].content.includes("not enabled"))
 })
 
 test("non-workflow button custom id is ignored", async () => {
@@ -153,6 +152,28 @@ test("non-workflow button custom id is ignored", async () => {
   const handled = await router.routeInteraction(interaction)
   assert.equal(handled, false)
   assert.equal(replies.length, 0)
+})
+
+test("onApprove callback fires for approve action", async () => {
+  const calls: Array<{ channelId: string; runId: string; actorUserId: string | null }> = []
+  const router = new DiscordInteractionRouter({
+    allowedChannelIds: ["chan-approve"],
+    onApprove: async (channelId, runId, actorUserId) => {
+      calls.push({ channelId, runId, actorUserId })
+    },
+  })
+  const { interaction } = makeInteraction(
+    "workflow_gate:approve:run-callback:step-1",
+    "chan-approve",
+    "user-approve",
+  )
+
+  const handled = await router.routeInteraction(interaction)
+  assert.equal(handled, true)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].channelId, "chan-approve")
+  assert.equal(calls[0].runId, "run-callback")
+  assert.equal(calls[0].actorUserId, "user-approve")
 })
 
 async function main() {

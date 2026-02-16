@@ -95,6 +95,21 @@ export class ThreadRunStore {
     return rows
   }
 
+  hasThread(threadId: string): boolean {
+    for (const record of this.records.values()) {
+      if (record.threadId === threadId) return true
+    }
+    return false
+  }
+
+  listThreadRunIds(threadId: string): string[] {
+    const runIds = new Set<string>()
+    for (const record of this.records.values()) {
+      if (record.threadId === threadId) runIds.add(record.runId)
+    }
+    return Array.from(runIds)
+  }
+
   summarizeRun(threadId: string, runId: string): ThreadRunSummary {
     const rows = this.listRun(threadId, runId)
     const summary: ThreadRunSummary = {

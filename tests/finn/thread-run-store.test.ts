@@ -94,6 +94,21 @@ test("listRun is scoped by thread and sorted by stepId", () => {
   assert.equal(rows[1].stepId, "z-step")
 })
 
+test("hasThread and listThreadRunIds reflect per-thread run tracking", () => {
+  const store = new ThreadRunStore({ now: () => "2026-02-16T10:12:00.000Z" })
+
+  store.touchPending({ threadId: "thread-5", runId: "run-a", stepId: "gate-1" })
+  store.touchPending({ threadId: "thread-5", runId: "run-b", stepId: "gate-1" })
+  store.touchPending({ threadId: "thread-5", runId: "run-b", stepId: "gate-2" })
+  store.touchPending({ threadId: "thread-6", runId: "run-c", stepId: "gate-1" })
+
+  assert.equal(store.hasThread("thread-5"), true)
+  assert.equal(store.hasThread("thread-missing"), false)
+
+  const runIds = store.listThreadRunIds("thread-5").sort()
+  assert.deepEqual(runIds, ["run-a", "run-b"])
+})
+
 async function main() {
   let failures = 0
   console.log("Thread Run Store Tests")

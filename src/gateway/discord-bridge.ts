@@ -11,6 +11,7 @@ import {
   ThreadRunStore,
   type ThreadRunDecision,
 } from "./thread-run-store.js"
+import { createPublicKey, verify as verifySignature } from "node:crypto"
 import {
   buildWorkflowActionRows,
   decodeWorkflowButtonCustomId,
@@ -118,18 +119,17 @@ export class DiscordBridge {
     }
 
     try {
-      const crypto = require("node:crypto")
       const rawKey = Buffer.from(this.config.publicKey, "hex")
       // Wrap raw 32-byte Ed25519 public key in SPKI DER envelope
       const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex")
-      const keyObj = crypto.createPublicKey({
+      const keyObj = createPublicKey({
         key: Buffer.concat([ED25519_SPKI_PREFIX, rawKey]),
         format: "der",
         type: "spki",
       })
       const signatureBytes = Buffer.from(signatureEd25519, "hex")
       const message = Buffer.from(signatureTimestamp + request.rawBody)
-      return crypto.verify(null, message, keyObj, signatureBytes)
+      return verifySignature(null, message, keyObj, signatureBytes)
     } catch {
       return false
     }
