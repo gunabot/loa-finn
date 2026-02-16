@@ -202,6 +202,10 @@ export class RequirementsFlow {
     }
   }
 
+  hasSession(threadId: string, runId: string): boolean {
+    return this.sessions.has(keyOf(threadId, runId))
+  }
+
   getState(threadId: string, runId: string): RequirementsSessionState | null {
     const state = this.sessions.get(keyOf(threadId, runId))
     return state ? cloneState(state) : null

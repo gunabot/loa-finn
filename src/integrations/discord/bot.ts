@@ -106,6 +106,48 @@ export async function createDiscordBot(
 
   client.on("ready", async () => {
     logger.info(`[discord-bot] ready as ${client.user?.tag ?? "unknown-user"}`)
+
+    // Register slash commands
+    try {
+      const { REST, Routes } = await import(discordModuleName)
+      const rest = new REST({ version: "10" }).setToken(token)
+      const commands = [
+        {
+          name: "requirements",
+          description: "Start a requirements interview for a new project",
+          options: [
+            {
+              name: "project",
+              description: "Project name (used as run ID)",
+              type: 3, // STRING
+              required: false,
+            },
+          ],
+        },
+        {
+          name: "status",
+          description: "Check workflow status for the current thread",
+          options: [],
+        },
+      ]
+
+      if (guildId) {
+        await rest.put(
+          Routes.applicationGuildCommands(config.discord.appId, guildId),
+          { body: commands },
+        )
+        logger.info(`[discord-bot] registered ${commands.length} guild slash commands`)
+      } else {
+        await rest.put(
+          Routes.applicationCommands(config.discord.appId),
+          { body: commands },
+        )
+        logger.info(`[discord-bot] registered ${commands.length} global slash commands`)
+      }
+    } catch (error) {
+      logger.error("[discord-bot] failed to register slash commands", error)
+    }
+
     if (!guildId || !client.guilds?.fetch) return
     try {
       const guild = await client.guilds.fetch(guildId)
@@ -163,34 +205,17 @@ export async function createDiscordBot(
       if (!isAllowedChannel(channelId, allowedChannelIds)) return
       if (!channelId) return
 
-      const runIdFromContent = parseRunIdFromText(message.content ?? "")
       await handleVoiceAttachments(message, voiceService)
 
-      // Minimal text workflow for interview progression in thread.
-      if ((message.content ?? "").startsWith("!requirements start")) {
-        const runId = runIdFromContent ?? deriveRunIdFromChannel(channelId)
-        threadRunStore.touchPending({
-          threadId: channelId,
-          runId,
-          stepId: RUN_LEVEL_GATE_STEP_ID,
-        })
-        const prompt = requirementsFlow.start(channelId, runId)
-        await message.reply?.({
-          content: formatInterviewPrompt(prompt.phase, prompt.question),
-          components: buildWorkflowActionRows({
-            threadId: channelId,
-            runId,
-          }),
-        })
-        return
-      }
-
-      if ((message.content ?? "").startsWith("!requirements answer")) {
-        const runId = runIdFromContent ?? deriveRunIdFromChannel(channelId)
-        const answerText = extractAnswerText(message.content ?? "")
+      // In an active interview thread, treat any message as an interview answer
+      const runId = deriveRunIdFromChannel(channelId)
+      const hasActiveInterview = requirementsFlow.hasSession(channelId, runId)
+      
+      if (hasActiveInterview && (message.content ?? "").trim()) {
+        const answerText = (message.content ?? "").trim()
         const result = requirementsFlow.answer(channelId, runId, answerText)
         if (!result.accepted) {
-          await message.reply?.({ content: "Please provide a non-empty answer." })
+          await message.reply?.({ content: "I need a bit more detail — could you elaborate?" })
           return
         }
         const workflowControls = buildWorkflowActionRows({
@@ -200,7 +225,7 @@ export async function createDiscordBot(
         if (result.completed) {
           const summary = requirementsFlow.buildSummary(channelId, runId)
           await message.reply?.({
-            content: `${summary}\n\nInterview complete. Use buttons for gate decision/status.`,
+            content: `${summary}\n\n✅ Interview complete. Review the summary above, then use the buttons to approve or request changes.`,
             components: workflowControls,
           })
           return
