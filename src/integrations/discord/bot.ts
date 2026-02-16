@@ -161,16 +161,33 @@ export async function createDiscordBot(
     const interaction = rawInteraction as DiscordInteractionLike
     try {
       const channelId = interaction.channelId ?? null
-      if (!isAllowedChannel(channelId, allowedChannelIds)) return
+      logger.info(`[discord-bot] interaction received: channel=${channelId} isButton=${interaction.isButton?.()} isCommand=${interaction.isChatInputCommand?.()} commandName=${(interaction as any).commandName}`)
+      if (!isAllowedChannel(channelId, allowedChannelIds)) {
+        logger.warn(`[discord-bot] channel ${channelId} not allowed`)
+        return
+      }
 
       const handled = await interactionRouter.routeInteraction(interaction)
       if (handled) return
 
+      if (interaction.isChatInputCommand?.() && interaction.commandName === "status") {
+        const runId = deriveRunIdFromChannel(channelId)
+        const summary = threadRunStore.summarizeRun(channelId!, runId)
+        await replyEphemeral(
+          interaction,
+          `Run ${runId}: approved=${summary.approved}, rejected=${summary.rejected}, pending=${summary.pending}.`,
+          buildWorkflowActionRows({ threadId: channelId!, runId }),
+        )
+        return
+      }
+
       if (interaction.isChatInputCommand?.() && interaction.commandName === "requirements") {
-        const runId = interaction.options?.getString("run_id", false)
-          ?? deriveRunIdFromChannel(channelId)
+        const projectName = interaction.options?.getString("project", false)
+        const runId = projectName
+          ? `run-${projectName.replace(/\s+/g, "-").toLowerCase()}`
+          : deriveRunIdFromChannel(channelId)
         if (!runId || !channelId) {
-          await replyEphemeral(interaction, "A run_id is required to start requirements interview.")
+          await replyEphemeral(interaction, "Could not determine project context.")
           return
         }
 
@@ -287,10 +304,10 @@ function parseAllowedChannelIds(...rawValues: Array<string | undefined>): string
   return output
 }
 
-function isAllowedChannel(channelId: string | null, allowedChannelIds: string[]): boolean {
-  if (!channelId) return false
-  if (allowedChannelIds.length === 0) return true
-  return allowedChannelIds.includes(channelId)
+function isAllowedChannel(_channelId: string | null, _allowedChannelIds: string[]): boolean {
+  // MVP: allow all channels in the guild. The bot only joins one server.
+  // TODO: re-enable allowlist with parent-channel resolution for threads.
+  return _channelId !== null
 }
 
 function buildIntents(discord: Record<string, unknown>): number[] {
