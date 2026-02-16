@@ -12,6 +12,13 @@ export interface FinnConfig {
   // Gateway
   port: number
   host: string
+  discord: {
+    enabled: boolean
+    botToken: string
+    appId: string
+    publicKey: string
+    channelId: string
+  }
 
   // Persistence
   dataDir: string
@@ -151,6 +158,13 @@ export function loadConfig(): FinnConfig {
 
     port: parseIntEnv("PORT", "3000"),
     host: process.env.HOST ?? "0.0.0.0",
+    discord: {
+      enabled: process.env.DISCORD_ENABLED === "true",
+      botToken: process.env.DISCORD_BOT_TOKEN ?? "",
+      appId: process.env.DISCORD_APP_ID ?? "",
+      publicKey: process.env.DISCORD_PUBLIC_KEY ?? "",
+      channelId: process.env.DISCORD_CHANNEL_ID ?? "",
+    },
 
     dataDir,
     sessionDir: `${dataDir}/sessions`,

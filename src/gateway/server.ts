@@ -16,6 +16,11 @@ import { createActivityHandler } from "../dashboard/activity-handler.js"
 import type { HounfourRouter } from "../hounfour/router.js"
 import type { S2SJwtSigner } from "../hounfour/s2s-jwt.js"
 import type { BillingFinalizeClient } from "../hounfour/billing-finalize-client.js"
+import {
+  DISCORD_INTERACTIONS_PATH,
+  shouldBypassDiscordApiAuth,
+  type DiscordBridge,
+} from "./discord-bridge.js"
 
 export interface AppOptions {
   healthAggregator?: HealthAggregator
@@ -27,6 +32,8 @@ export interface AppOptions {
   s2sSigner?: S2SJwtSigner
   /** Billing finalize client for health metrics (Sprint 2 T3) */
   billingFinalizeClient?: BillingFinalizeClient
+  /** Discord interactions bridge (slice 1 scaffold) */
+  discordBridge?: DiscordBridge
 }
 
 export function createApp(config: FinnConfig, options: AppOptions) {
@@ -122,12 +129,30 @@ export function createApp(config: FinnConfig, options: AppOptions) {
   // Skip /api/v1/* paths — already handled by JWT middleware above
   app.use("/api/*", async (c, next) => {
     if (c.req.path.startsWith("/api/v1/")) return next()
+    if (shouldBypassDiscordApiAuth(config.discord.enabled, c.req.path)) return next()
     return rateLimitMiddleware(config)(c, next)
   })
   app.use("/api/*", async (c, next) => {
     if (c.req.path.startsWith("/api/v1/")) return next()
+    if (shouldBypassDiscordApiAuth(config.discord.enabled, c.req.path)) return next()
     return authMiddleware(config)(c, next)
   })
+
+  // POST /api/discord/interactions — Discord webhook-style interaction ingress (slice 1 scaffold)
+  if (config.discord.enabled && options.discordBridge) {
+    app.post(DISCORD_INTERACTIONS_PATH, async (c) => {
+      const rawBody = await c.req.text()
+      const result = await options.discordBridge!.handleInteraction({
+        rawBody,
+        headers: {
+          signatureEd25519: c.req.header("x-signature-ed25519"),
+          signatureTimestamp: c.req.header("x-signature-timestamp"),
+          debugSignatureBypass: c.req.header("x-debug-discord-signature-ok"),
+        },
+      })
+      return c.json(result.body, result.status as any)
+    })
+  }
 
   // POST /api/sessions — create session
   app.post("/api/sessions", async (c) => {

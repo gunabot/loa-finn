@@ -11,6 +11,7 @@ import { GitSync } from "./persistence/git-sync.js"
 import { runRecovery } from "./persistence/recovery.js"
 import { WALPruner } from "./persistence/pruner.js"
 import { createApp } from "./gateway/server.js"
+import { DiscordBridge } from "./gateway/discord-bridge.js"
 import { handleWebSocket } from "./gateway/ws.js"
 import { validateWsToken } from "./gateway/auth.js"
 import { Scheduler } from "./scheduler/scheduler.js"
@@ -393,8 +394,50 @@ async function main() {
     console.log("[finn] sidecar mode requested but hounfour not available — skipped")
   }
 
+  // 6g. Initialize Discord interaction bridge (slice 1 scaffold)
+  let discordBridge: DiscordBridge | undefined
+  if (config.discord.enabled) {
+    discordBridge = new DiscordBridge({
+      appId: config.discord.appId,
+      publicKey: config.discord.publicKey,
+      channelId: config.discord.channelId,
+    }, {
+      workflowGateDecisionHandler: async (input) => {
+        console.log(
+          `[discord] workflow gate decision run=${input.runId} step=${input.stepId} decision=${input.decision} actor=${input.actorUserId ?? "unknown"}`,
+        )
+        return {
+          ok: true,
+          message: `Recorded ${input.decision} for ${input.runId}/${input.stepId}.`,
+        }
+      },
+      interviewActionHandler: async (input) => {
+        console.log(
+          `[discord] interview action=${input.action} session=${input.sessionId ?? "none"} actor=${input.actorUserId ?? "unknown"}`,
+        )
+        const prompt = input.action === "start"
+          ? "What outcome should this workflow deliver? Keep it to one sentence."
+          : input.action === "repeat"
+            ? "Repeat the requirement slowly, one constraint at a time."
+            : "Noted. Next, state approvals needed and your deadline."
+        return { ok: true, prompt }
+      },
+    })
+    console.log("[finn] discord bridge enabled")
+  } else {
+    console.log("[finn] discord bridge disabled (set DISCORD_ENABLED=true to enable)")
+  }
+
   // 7. Create gateway (with executor for sandbox, pool for health stats)
-  const { app, router } = createApp(config, { activityFeed, executor, pool, hounfour, s2sSigner, billingFinalizeClient })
+  const { app, router } = createApp(config, {
+    activityFeed,
+    executor,
+    pool,
+    hounfour,
+    s2sSigner,
+    billingFinalizeClient,
+    discordBridge,
+  })
 
   // 8. Set up scheduler with registered tasks (T-4.4)
   const scheduler = new Scheduler()
