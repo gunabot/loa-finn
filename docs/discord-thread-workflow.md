@@ -5,7 +5,7 @@ This runtime supports driving Finn from a Discord thread with:
 - workflow gate buttons (`Approve`, `Reject`, `Status`)
 - thread-scoped requirements interview prompts
 - in-memory gate status persistence keyed by `threadId + runId`
-- disk-backed project workspace persistence at `projects/<run-id>/`
+- disk-backed project workspace persistence at `<PROJECT_BASE_DIR>/<run-id>/`
 
 ## API Notes
 
@@ -30,10 +30,10 @@ This runtime supports driving Finn from a Discord thread with:
 - Discord bot interaction router (`src/integrations/discord/interaction-router.ts`)
 - Run-level decisions from v2 IDs are stored under step id `__run_gate__`.
 - Interview and build lifecycle state is persisted on disk via `DiscordProjectRuntime`:
-- `projects/<run-id>/state.json`
-- `projects/<run-id>/interview.json`
-- `projects/<run-id>/PRD.md`
-- `projects/<run-id>/build.log`
+- `<PROJECT_BASE_DIR>/<run-id>/state.json`
+- `<PROJECT_BASE_DIR>/<run-id>/interview.json`
+- `<PROJECT_BASE_DIR>/<run-id>/PRD.md`
+- `<PROJECT_BASE_DIR>/<run-id>/build.log`
 
 ### Build orchestration
 

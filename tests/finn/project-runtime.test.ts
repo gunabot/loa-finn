@@ -141,6 +141,31 @@ test("startBuild executes command in project dir and emits progress/completion",
   })
 })
 
+test("PROJECT_BASE_DIR env controls default project workspace root", async () => {
+  await withTempDir(async (dir) => {
+    const prevProjectBaseDir = process.env.PROJECT_BASE_DIR
+    const prevDiscordProjectsRoot = process.env.DISCORD_PROJECTS_ROOT
+    process.env.PROJECT_BASE_DIR = join(dir, "external-projects")
+    delete process.env.DISCORD_PROJECTS_ROOT
+
+    try {
+      const runtime = new DiscordProjectRuntime({
+        repoRoot: dir,
+        now: () => "2026-02-16T14:04:00.000Z",
+      })
+
+      const state = await runtime.ensureProject("run-env", "thread-env")
+      assert.ok(state.projectDir.startsWith(join(dir, "external-projects")))
+    } finally {
+      if (prevProjectBaseDir === undefined) delete process.env.PROJECT_BASE_DIR
+      else process.env.PROJECT_BASE_DIR = prevProjectBaseDir
+
+      if (prevDiscordProjectsRoot === undefined) delete process.env.DISCORD_PROJECTS_ROOT
+      else process.env.DISCORD_PROJECTS_ROOT = prevDiscordProjectsRoot
+    }
+  })
+})
+
 async function main() {
   let failures = 0
   console.log("Discord Project Runtime Tests")

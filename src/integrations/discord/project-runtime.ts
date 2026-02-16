@@ -72,7 +72,10 @@ export class DiscordProjectRuntime {
   }
 
   constructor(options: DiscordProjectRuntimeOptions = {}) {
-    this.projectsRoot = resolve(options.projectsRoot ?? process.env.DISCORD_PROJECTS_ROOT ?? "projects")
+    const envProjectsRoot = process.env.PROJECT_BASE_DIR
+      ?? process.env.DISCORD_PROJECTS_ROOT
+      ?? "projects"
+    this.projectsRoot = resolve(options.projectsRoot ?? envProjectsRoot)
     this.repoRoot = resolve(options.repoRoot ?? process.cwd())
     this.now = options.now ?? (() => new Date().toISOString())
     this.logger = options.logger ?? {
