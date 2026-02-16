@@ -3,6 +3,7 @@
 
 export type ThreadRunDecision = "approve" | "reject"
 export type ThreadRunStatus = "pending" | "approved" | "rejected"
+export const RUN_LEVEL_GATE_STEP_ID = "__run_gate__"
 
 export interface ThreadRunRecord {
   threadId: string

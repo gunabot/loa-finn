@@ -1,7 +1,8 @@
 // tests/finn/interaction-router.test.ts
 
 import assert from "node:assert/strict"
-import { ThreadRunStore } from "../../src/gateway/thread-run-store.js"
+import { RUN_LEVEL_GATE_STEP_ID, ThreadRunStore } from "../../src/gateway/thread-run-store.js"
+import { encodeWorkflowButtonCustomId } from "../../src/integrations/discord/components.js"
 import { DiscordInteractionRouter } from "../../src/integrations/discord/interaction-router.js"
 
 const tests: Array<{ name: string; fn: () => void | Promise<void> }> = []
@@ -15,13 +16,13 @@ function makeInteraction(
   channelId: string,
   userId: string = "user-1",
 ) {
-  const replies: Array<{ content: string; ephemeral?: boolean }> = []
+  const replies: Array<{ content: string; ephemeral?: boolean; components?: unknown[] }> = []
   const interaction = {
     customId,
     channelId,
     user: { id: userId },
     isButton: () => true,
-    reply: async (options: { content: string; ephemeral?: boolean }) => {
+    reply: async (options: { content: string; ephemeral?: boolean; components?: unknown[] }) => {
       replies.push(options)
     },
   }
@@ -45,6 +46,7 @@ test("approve action updates thread-run-store and replies ephemerally", async ()
   assert.equal(replies.length, 1)
   assert.equal(replies[0].ephemeral, true)
   assert.ok(replies[0].content.includes("Recorded approved"))
+  assert.ok(Array.isArray(replies[0].components))
 
   const step = store.getStep({ threadId: "chan-1", runId: "run-42", stepId: "step-review" })
   assert.equal(step?.status, "approved")
@@ -81,6 +83,33 @@ test("status action reports run summary", async () => {
   assert.ok(replies[0].content.includes("approved=1"))
   assert.ok(replies[0].content.includes("rejected=1"))
   assert.ok(replies[0].content.includes("pending=1"))
+  assert.ok(Array.isArray(replies[0].components))
+})
+
+test("components v2 custom_id uses encoded threadId/runId and persists run-level decision", async () => {
+  const store = new ThreadRunStore({ now: () => "2026-02-16T12:13:00.000Z" })
+  const router = new DiscordInteractionRouter({
+    threadRunStore: store,
+    allowedChannelIds: ["chan-fallback"],
+  })
+  const customId = encodeWorkflowButtonCustomId({
+    action: "approve",
+    threadId: "thread-encoded",
+    runId: "run-encoded",
+  })
+  const { interaction, replies } = makeInteraction(customId, "chan-fallback")
+
+  const handled = await router.routeInteraction(interaction)
+  assert.equal(handled, true)
+  assert.equal(replies.length, 1)
+  assert.ok(replies[0].content.includes("Recorded approved"))
+
+  const row = store.getStep({
+    threadId: "thread-encoded",
+    runId: "run-encoded",
+    stepId: RUN_LEVEL_GATE_STEP_ID,
+  })
+  assert.equal(row?.status, "approved")
 })
 
 test("status action for unknown step returns not-found message", async () => {

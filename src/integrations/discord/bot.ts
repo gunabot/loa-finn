@@ -2,8 +2,9 @@
 // Discord.js lifecycle wrapper for Loa/Finn thread workflow control.
 
 import type { FinnConfig } from "../../config.js"
-import { ThreadRunStore } from "../../gateway/thread-run-store.js"
+import { RUN_LEVEL_GATE_STEP_ID, ThreadRunStore } from "../../gateway/thread-run-store.js"
 import { RequirementsFlow } from "../../interview/requirements-flow.js"
+import { buildWorkflowActionRows } from "./components.js"
 import { DiscordInteractionRouter } from "./interaction-router.js"
 import { DiscordVoiceService } from "./voice.js"
 
@@ -43,7 +44,7 @@ interface DiscordMessageLike {
   channelId?: string | null
   content?: string | null
   attachments?: Iterable<unknown> | Map<unknown, unknown>
-  reply?(options: { content: string }): Promise<unknown>
+  reply?(options: { content: string; components?: unknown[] }): Promise<unknown>
 }
 
 interface DiscordInteractionLike {
@@ -54,9 +55,9 @@ interface DiscordInteractionLike {
   options?: { getString(name: string, required?: boolean): string | null }
   isButton?(): boolean
   isChatInputCommand?(): boolean
-  reply?(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  followUp?(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  editReply?(options: { content: string }): Promise<unknown>
+  reply?(options: { content: string; ephemeral?: boolean; components?: unknown[] }): Promise<unknown>
+  followUp?(options: { content: string; ephemeral?: boolean; components?: unknown[] }): Promise<unknown>
+  editReply?(options: { content: string; components?: unknown[] }): Promise<unknown>
 }
 
 export async function createDiscordBot(
@@ -131,10 +132,20 @@ export async function createDiscordBot(
           return
         }
 
+        threadRunStore.touchPending({
+          threadId: channelId,
+          runId,
+          stepId: RUN_LEVEL_GATE_STEP_ID,
+        })
         const prompt = requirementsFlow.start(channelId, runId)
+        const workflowControls = buildWorkflowActionRows({
+          threadId: channelId,
+          runId,
+        })
         await replyEphemeral(
           interaction,
-          `[${prompt.phase}] ${prompt.question}`,
+          formatInterviewPrompt(prompt.phase, prompt.question),
+          workflowControls,
         )
       }
     } catch (error) {
@@ -158,8 +169,19 @@ export async function createDiscordBot(
       // Minimal text workflow for interview progression in thread.
       if ((message.content ?? "").startsWith("!requirements start")) {
         const runId = runIdFromContent ?? deriveRunIdFromChannel(channelId)
+        threadRunStore.touchPending({
+          threadId: channelId,
+          runId,
+          stepId: RUN_LEVEL_GATE_STEP_ID,
+        })
         const prompt = requirementsFlow.start(channelId, runId)
-        await message.reply?.({ content: `[${prompt.phase}] ${prompt.question}` })
+        await message.reply?.({
+          content: formatInterviewPrompt(prompt.phase, prompt.question),
+          components: buildWorkflowActionRows({
+            threadId: channelId,
+            runId,
+          }),
+        })
         return
       }
 
@@ -171,12 +193,22 @@ export async function createDiscordBot(
           await message.reply?.({ content: "Please provide a non-empty answer." })
           return
         }
+        const workflowControls = buildWorkflowActionRows({
+          threadId: channelId,
+          runId,
+        })
         if (result.completed) {
           const summary = requirementsFlow.buildSummary(channelId, runId)
-          await message.reply?.({ content: `${summary}\n\nInterview complete.` })
+          await message.reply?.({
+            content: `${summary}\n\nInterview complete. Use buttons for gate decision/status.`,
+            components: workflowControls,
+          })
           return
         }
-        await message.reply?.({ content: `[${result.prompt!.phase}] ${result.prompt!.question}` })
+        await message.reply?.({
+          content: formatInterviewPrompt(result.prompt!.phase, result.prompt!.question),
+          components: workflowControls,
+        })
       }
     } catch (error) {
       logger.error("[discord-bot] messageCreate handler failed", error)
@@ -311,17 +343,21 @@ function normalizeAttachments(input: DiscordMessageLike["attachments"]): Array<{
   return attachments
 }
 
-async function replyEphemeral(interaction: DiscordInteractionLike, content: string): Promise<void> {
+async function replyEphemeral(
+  interaction: DiscordInteractionLike,
+  content: string,
+  components?: unknown[],
+): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, ephemeral: true })
+    await interaction.followUp({ content, ephemeral: true, components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
-    await interaction.editReply({ content })
+    await interaction.editReply({ content, components })
     return
   }
   if (typeof interaction.reply === "function") {
-    await interaction.reply({ content, ephemeral: true })
+    await interaction.reply({ content, ephemeral: true, components })
   }
 }
 
@@ -331,4 +367,8 @@ async function safeInteractionErrorReply(interaction: DiscordInteractionLike): P
   } catch {
     // Best-effort only.
   }
+}
+
+function formatInterviewPrompt(phase: string, question: string): string {
+  return `Interview phase ${phase}\n${question}`
 }

@@ -6,7 +6,16 @@
 // - Route requirements-interview actions
 // - Keep logic framework-agnostic so Hono routes can delegate here
 
-import { ThreadRunStore, type ThreadRunDecision } from "./thread-run-store.js"
+import {
+  RUN_LEVEL_GATE_STEP_ID,
+  ThreadRunStore,
+  type ThreadRunDecision,
+} from "./thread-run-store.js"
+import {
+  buildWorkflowActionRows,
+  decodeWorkflowButtonCustomId,
+  type DiscordActionRowComponentV2,
+} from "../integrations/discord/components.js"
 
 export interface DiscordBridgeConfig {
   appId: string
@@ -143,7 +152,10 @@ export class DiscordBridge {
         }
       }
 
-      if (customId.startsWith(`${DISCORD_WORKFLOW_CUSTOM_ID_PREFIX}:`)) {
+      if (
+        customId.startsWith(`${DISCORD_WORKFLOW_CUSTOM_ID_PREFIX}:`)
+        || customId.startsWith("workflow_v2:")
+      ) {
         return this.handleWorkflowGateAction(payloadObj)
       }
 
@@ -209,7 +221,9 @@ export class DiscordBridge {
       }
     }
 
-    const threadId = getStringField(payload, "channel_id") ?? this.config.channelId
+    const threadId = parsed.threadId
+      ?? getStringField(payload, "channel_id")
+      ?? this.config.channelId
     if (!threadId) {
       return {
         status: 400,
@@ -227,11 +241,13 @@ export class DiscordBridge {
         return ephemeralMessage(
           `No status found for ${parsed.runId}/${parsed.stepId}.`,
           "DISCORD_WORKFLOW_STATUS_EMPTY",
+          workflowActionComponents(threadId, parsed.runId),
         )
       }
       return ephemeralMessage(
         `Status ${parsed.runId}/${parsed.stepId}: ${step.status}.`,
         "DISCORD_WORKFLOW_STATUS_OK",
+        workflowActionComponents(threadId, parsed.runId),
       )
     }
 
@@ -239,6 +255,7 @@ export class DiscordBridge {
     return ephemeralMessage(
       `Run ${parsed.runId}: steps=${summary.totalSteps}, approved=${summary.approved}, rejected=${summary.rejected}, pending=${summary.pending}.`,
       "DISCORD_WORKFLOW_STATUS_OK",
+      workflowActionComponents(threadId, parsed.runId),
     )
   }
 
@@ -247,7 +264,7 @@ export class DiscordBridge {
     expectedDecision: ThreadRunDecision,
   ): Promise<DiscordInteractionResponse> {
     const parsed = parseWorkflowAction(payload)
-    if (!parsed || parsed.action !== expectedDecision || !parsed.stepId) {
+    if (!parsed || parsed.action !== expectedDecision) {
       return {
         status: 400,
         body: { error: "Bad Request", code: "DISCORD_WORKFLOW_ACTION_INVALID" },
@@ -256,18 +273,21 @@ export class DiscordBridge {
 
     const actorUserId = getStringField(getObjectField(payload, "user"), "id")
       ?? getStringField(getObjectField(getObjectField(payload, "member"), "user"), "id")
-    const threadId = getStringField(payload, "channel_id") ?? this.config.channelId
+    const threadId = parsed.threadId
+      ?? getStringField(payload, "channel_id")
+      ?? this.config.channelId
     if (!threadId) {
       return {
         status: 400,
         body: { error: "Bad Request", code: "DISCORD_THREAD_ID_MISSING" },
       }
     }
+    const stepId = parsed.stepId ?? RUN_LEVEL_GATE_STEP_ID
 
     if (this.deps.workflowGateDecisionHandler) {
       const result = await this.deps.workflowGateDecisionHandler({
         runId: parsed.runId,
-        stepId: parsed.stepId,
+        stepId,
         decision: expectedDecision,
         actorUserId,
       })
@@ -282,21 +302,23 @@ export class DiscordBridge {
     this.threadRunStore.applyDecision({
       threadId,
       runId: parsed.runId,
-      stepId: parsed.stepId,
+      stepId,
       decision: expectedDecision,
       actorUserId,
     })
 
     if (!this.deps.workflowGateDecisionHandler) {
       return ephemeralMessage(
-        `Captured workflow decision: ${expectedDecision} (${parsed.runId}/${parsed.stepId}). Handler not wired yet.`,
+        `Captured workflow decision: ${expectedDecision} (${parsed.runId}/${stepId}). Handler not wired yet.`,
         "DISCORD_WORKFLOW_HANDLER_TODO",
+        workflowActionComponents(threadId, parsed.runId),
       )
     }
 
     return ephemeralMessage(
-      `Workflow step ${parsed.stepId} marked ${expectedDecision}.`,
+      `Workflow step ${stepId} marked ${expectedDecision}.`,
       "DISCORD_WORKFLOW_ACTION_ACCEPTED",
+      workflowActionComponents(threadId, parsed.runId),
     )
   }
 
@@ -328,7 +350,11 @@ export class DiscordBridge {
   }
 }
 
-function ephemeralMessage(message: string, code: string): DiscordInteractionResponse {
+function ephemeralMessage(
+  message: string,
+  code: string,
+  components?: DiscordActionRowComponentV2[],
+): DiscordInteractionResponse {
   return {
     status: 200,
     body: {
@@ -336,6 +362,7 @@ function ephemeralMessage(message: string, code: string): DiscordInteractionResp
       data: {
         content: message,
         flags: DISCORD_EPHEMERAL_FLAG,
+        ...(components ? { components } : {}),
       },
       code,
     },
@@ -346,11 +373,22 @@ interface ParsedWorkflowAction {
   action: "approve" | "reject" | "status"
   runId: string
   stepId: string | null
+  threadId: string | null
 }
 
 function parseWorkflowAction(payload: Record<string, unknown>): ParsedWorkflowAction | null {
   const customId = getStringField(getObjectField(payload, "data"), "custom_id")
   if (!customId) return null
+
+  const decodedV2 = decodeWorkflowButtonCustomId(customId)
+  if (decodedV2) {
+    return {
+      action: decodedV2.action,
+      runId: decodedV2.runId,
+      stepId: decodedV2.action === "status" ? null : RUN_LEVEL_GATE_STEP_ID,
+      threadId: decodedV2.threadId,
+    }
+  }
 
   const parts = customId.split(":")
   if (parts.length < 3 || parts[0] !== DISCORD_WORKFLOW_CUSTOM_ID_PREFIX) return null
@@ -359,21 +397,28 @@ function parseWorkflowAction(payload: Record<string, unknown>): ParsedWorkflowAc
   const actionCandidate = parts[1]
   if (actionCandidate === "approve" || actionCandidate === "reject") {
     if (parts.length !== 4 || !parts[2] || !parts[3]) return null
-    return { action: actionCandidate, runId: parts[2], stepId: parts[3] }
+    return { action: actionCandidate, runId: parts[2], stepId: parts[3], threadId: null }
   }
   if (actionCandidate === "status") {
     if (!parts[2]) return null
     const stepId = parts.length >= 4 && parts[3] ? parts[3] : null
-    return { action: "status", runId: parts[2], stepId }
+    return { action: "status", runId: parts[2], stepId, threadId: null }
   }
 
   // Legacy format fallback: workflow_gate:<runId>:<stepId>:<decision>
   if (parts.length === 4 && (parts[3] === "approve" || parts[3] === "reject")) {
     if (!parts[1] || !parts[2]) return null
-    return { action: parts[3], runId: parts[1], stepId: parts[2] }
+    return { action: parts[3], runId: parts[1], stepId: parts[2], threadId: null }
   }
 
   return null
+}
+
+function workflowActionComponents(threadId: string, runId: string): DiscordActionRowComponentV2[] {
+  return buildWorkflowActionRows({
+    threadId,
+    runId,
+  })
 }
 
 function parseInterviewAction(payload: Record<string, unknown>): InterviewActionInput | null {

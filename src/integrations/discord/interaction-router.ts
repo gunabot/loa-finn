@@ -1,7 +1,16 @@
 // src/integrations/discord/interaction-router.ts
 // Routes Discord button interactions to workflow run decisions/status.
 
-import { ThreadRunStore, type ThreadRunDecision } from "../../gateway/thread-run-store.js"
+import {
+  RUN_LEVEL_GATE_STEP_ID,
+  ThreadRunStore,
+  type ThreadRunDecision,
+} from "../../gateway/thread-run-store.js"
+import {
+  buildWorkflowActionRows,
+  decodeWorkflowButtonCustomId,
+  type DiscordActionRowComponentV2,
+} from "./components.js"
 
 export interface DiscordButtonInteractionLike {
   customId: string
@@ -9,9 +18,9 @@ export interface DiscordButtonInteractionLike {
   user?: { id?: string | null } | null
   replied?: boolean
   deferred?: boolean
-  reply(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  followUp?(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  editReply?(options: { content: string }): Promise<unknown>
+  reply(options: InteractionReplyOptions): Promise<unknown>
+  followUp?(options: InteractionReplyOptions): Promise<unknown>
+  editReply?(options: { content: string; components?: DiscordActionRowComponentV2[] }): Promise<unknown>
 }
 
 export interface DiscordInteractionLike {
@@ -21,9 +30,9 @@ export interface DiscordInteractionLike {
   user?: { id?: string | null } | null
   replied?: boolean
   deferred?: boolean
-  reply?(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  followUp?(options: { content: string; ephemeral?: boolean }): Promise<unknown>
-  editReply?(options: { content: string }): Promise<unknown>
+  reply?(options: InteractionReplyOptions): Promise<unknown>
+  followUp?(options: InteractionReplyOptions): Promise<unknown>
+  editReply?(options: { content: string; components?: DiscordActionRowComponentV2[] }): Promise<unknown>
 }
 
 interface DiscordInteractionRouterOptions {
@@ -39,6 +48,7 @@ interface ParsedWorkflowAction {
   action: "approve" | "reject" | "status"
   runId: string
   stepId: string | null
+  threadId: string | null
 }
 
 const CUSTOM_ID_PREFIX = "workflow_gate"
@@ -60,26 +70,27 @@ export class DiscordInteractionRouter {
   async routeInteraction(interaction: DiscordInteractionLike): Promise<boolean> {
     if (!isButtonInteraction(interaction)) return false
 
-    const channelId = interaction.channelId
-    if (!channelId) {
+    const fallbackChannelId = interaction.channelId
+    if (!fallbackChannelId) {
       await respondEphemeral(interaction, "This interaction has no channel context.")
       return true
     }
 
-    if (this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(channelId)) {
+    if (this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(fallbackChannelId)) {
       await respondEphemeral(interaction, "This channel is not enabled for workflow controls.")
       return true
     }
 
     const parsed = parseWorkflowAction(interaction.customId)
     if (!parsed) return false
+    const threadId = parsed.threadId ?? fallbackChannelId
 
     if (parsed.action === "status") {
-      await this.replyStatus(interaction, channelId, parsed)
+      await this.replyStatus(interaction, threadId, parsed)
       return true
     }
 
-    await this.applyDecision(interaction, channelId, parsed)
+    await this.applyDecision(interaction, threadId, parsed)
     return true
   }
 
@@ -88,27 +99,28 @@ export class DiscordInteractionRouter {
     channelId: string,
     parsed: ParsedWorkflowAction,
   ): Promise<void> {
-    if (!parsed.stepId) {
-      await respondEphemeral(interaction, "Step id is required for approve/reject.")
-      return
-    }
+    const stepId = parsed.stepId ?? RUN_LEVEL_GATE_STEP_ID
 
     const actorUserId = interaction.user?.id ?? null
     const decision = parsed.action as ThreadRunDecision
     const updated = this.threadRunStore.applyDecision({
       threadId: channelId,
       runId: parsed.runId,
-      stepId: parsed.stepId,
+      stepId,
       decision,
       actorUserId,
     })
 
     this.logger.info(
-      `[discord] workflow ${decision} thread=${channelId} run=${parsed.runId} step=${parsed.stepId} actor=${actorUserId ?? "unknown"}`,
+      `[discord] workflow ${decision} thread=${channelId} run=${parsed.runId} step=${stepId} actor=${actorUserId ?? "unknown"}`,
     )
     await respondEphemeral(
       interaction,
       `Recorded ${updated.status} for ${updated.runId}/${updated.stepId}.`,
+      buildWorkflowActionRows({
+        threadId: channelId,
+        runId: parsed.runId,
+      }),
     )
   }
 
@@ -124,10 +136,24 @@ export class DiscordInteractionRouter {
         stepId: parsed.stepId,
       })
       if (!step) {
-        await respondEphemeral(interaction, `No status found for ${parsed.runId}/${parsed.stepId}.`)
+        await respondEphemeral(
+          interaction,
+          `No status found for ${parsed.runId}/${parsed.stepId}.`,
+          buildWorkflowActionRows({
+            threadId: channelId,
+            runId: parsed.runId,
+          }),
+        )
         return
       }
-      await respondEphemeral(interaction, `Status ${parsed.runId}/${parsed.stepId}: ${step.status}.`)
+      await respondEphemeral(
+        interaction,
+        `Status ${parsed.runId}/${parsed.stepId}: ${step.status}.`,
+        buildWorkflowActionRows({
+          threadId: channelId,
+          runId: parsed.runId,
+        }),
+      )
       return
     }
 
@@ -135,6 +161,10 @@ export class DiscordInteractionRouter {
     await respondEphemeral(
       interaction,
       `Run ${parsed.runId}: approved=${summary.approved}, rejected=${summary.rejected}, pending=${summary.pending}.`,
+      buildWorkflowActionRows({
+        threadId: channelId,
+        runId: parsed.runId,
+      }),
     )
   }
 }
@@ -149,6 +179,16 @@ function isButtonInteraction(interaction: DiscordInteractionLike): interaction i
 }
 
 function parseWorkflowAction(customId: string): ParsedWorkflowAction | null {
+  const decodedV2 = decodeWorkflowButtonCustomId(customId)
+  if (decodedV2) {
+    return {
+      action: decodedV2.action,
+      runId: decodedV2.runId,
+      stepId: decodedV2.action === "status" ? null : RUN_LEVEL_GATE_STEP_ID,
+      threadId: decodedV2.threadId,
+    }
+  }
+
   const parts = customId.split(":")
   if (parts.length < 3 || parts[0] !== CUSTOM_ID_PREFIX) return null
 
@@ -156,34 +196,41 @@ function parseWorkflowAction(customId: string): ParsedWorkflowAction | null {
   const action = parts[1]
   if (action === "approve" || action === "reject") {
     if (parts.length !== 4 || !parts[2] || !parts[3]) return null
-    return { action, runId: parts[2], stepId: parts[3] }
+    return { action, runId: parts[2], stepId: parts[3], threadId: null }
   }
 
   if (action === "status") {
     if (!parts[2]) return null
-    return { action: "status", runId: parts[2], stepId: parts[3] ?? null }
+    return { action: "status", runId: parts[2], stepId: parts[3] ?? null, threadId: null }
   }
 
   // Legacy format: workflow_gate:<runId>:<stepId>:<decision>
   if (parts.length === 4 && (parts[3] === "approve" || parts[3] === "reject")) {
     if (!parts[1] || !parts[2]) return null
-    return { action: parts[3], runId: parts[1], stepId: parts[2] }
+    return { action: parts[3], runId: parts[1], stepId: parts[2], threadId: null }
   }
 
   return null
 }
 
+interface InteractionReplyOptions {
+  content: string
+  ephemeral?: boolean
+  components?: DiscordActionRowComponentV2[]
+}
+
 async function respondEphemeral(
   interaction: DiscordButtonInteractionLike,
   content: string,
+  components?: DiscordActionRowComponentV2[],
 ): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, ephemeral: true })
+    await interaction.followUp({ content, ephemeral: true, components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
-    await interaction.editReply({ content })
+    await interaction.editReply({ content, components })
     return
   }
-  await interaction.reply({ content, ephemeral: true })
+  await interaction.reply({ content, ephemeral: true, components })
 }

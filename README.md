@@ -22,6 +22,19 @@ The architecture follows a layered runtime pattern: a central orchestrator (`src
 - **WebSocket Streaming** — Real-time agent streaming with 8 event types, per-IP connection limits, and automatic compaction (`src/gateway/ws.ts:1`)
 - **Activity Dashboard** — Aggregated health snapshot with audit trail browsing and GitHub activity feed (`src/gateway/dashboard-routes.ts:1`)
 
+## Discord Thread Workflow
+
+- Thread-first Finn control is available through Discord interactions and bot handlers.
+- Workflow gates support `Approve`, `Reject`, and `Status` buttons.
+- Requirements interview flow is phase-driven and thread-scoped.
+- Voice is optional and currently implemented as a transcription stub.
+
+See `docs/discord-thread-workflow.md` for:
+
+- API notes for `POST /api/discord/interactions`
+- workflow custom ID formats (legacy + Components v2)
+- migration notes from `workflow_gate:*` to `workflow_v2:*`
+
 ## Quick Start
 
 ### Prerequisites

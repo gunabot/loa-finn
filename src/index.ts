@@ -12,7 +12,9 @@ import { runRecovery } from "./persistence/recovery.js"
 import { WALPruner } from "./persistence/pruner.js"
 import { createApp } from "./gateway/server.js"
 import { DiscordBridge } from "./gateway/discord-bridge.js"
+import { ThreadRunStore } from "./gateway/thread-run-store.js"
 import { createDiscordBot, type DiscordBotLifecycle } from "./integrations/discord/bot.js"
+import { RequirementsFlow } from "./interview/requirements-flow.js"
 import { handleWebSocket } from "./gateway/ws.js"
 import { validateWsToken } from "./gateway/auth.js"
 import { Scheduler } from "./scheduler/scheduler.js"
@@ -395,6 +397,10 @@ async function main() {
     console.log("[finn] sidecar mode requested but hounfour not available — skipped")
   }
 
+  // 6g. Shared Discord workflow/interview state
+  const discordThreadRunStore = new ThreadRunStore()
+  const requirementsFlow = new RequirementsFlow()
+
   // 6g. Initialize Discord interaction bridge (slice 1 scaffold)
   let discordBridge: DiscordBridge | undefined
   if (config.discord.enabled) {
@@ -403,6 +409,7 @@ async function main() {
       publicKey: config.discord.publicKey,
       channelId: config.discord.channelId,
     }, {
+      threadRunStore: discordThreadRunStore,
       workflowGateDecisionHandler: async (input) => {
         console.log(
           `[discord] workflow gate decision run=${input.runId} step=${input.stepId} decision=${input.decision} actor=${input.actorUserId ?? "unknown"}`,
@@ -416,11 +423,24 @@ async function main() {
         console.log(
           `[discord] interview action=${input.action} session=${input.sessionId ?? "none"} actor=${input.actorUserId ?? "unknown"}`,
         )
-        const prompt = input.action === "start"
-          ? "What outcome should this workflow deliver? Keep it to one sentence."
-          : input.action === "repeat"
-            ? "Repeat the requirement slowly, one constraint at a time."
-            : "Noted. Next, state approvals needed and your deadline."
+        const interviewRunId = input.sessionId ?? "run-discord-interview"
+        if (input.action === "start") {
+          const firstPrompt = requirementsFlow.start(config.discord.channelId, interviewRunId)
+          return { ok: true, prompt: `Interview phase ${firstPrompt.phase}\n${firstPrompt.question}` }
+        }
+        if (input.utterance && input.utterance.trim().length > 0) {
+          const result = requirementsFlow.answer(config.discord.channelId, interviewRunId, input.utterance)
+          if (result.completed) {
+            const summary = requirementsFlow.buildSummary(config.discord.channelId, interviewRunId)
+            return { ok: true, prompt: `${summary}\n\nInterview complete.` }
+          }
+          if (result.prompt) {
+            return { ok: true, prompt: `Interview phase ${result.prompt.phase}\n${result.prompt.question}` }
+          }
+        }
+        const prompt = input.action === "repeat"
+          ? "Repeat the requirement slowly, one constraint at a time."
+          : "Continue with requirements details: users, constraints, and priorities."
         return { ok: true, prompt }
       },
     })
@@ -433,7 +453,10 @@ async function main() {
   let discordBot: DiscordBotLifecycle | undefined
   if (config.discord.enabled) {
     try {
-      discordBot = await createDiscordBot(config)
+      discordBot = await createDiscordBot(config, {
+        threadRunStore: discordThreadRunStore,
+        requirementsFlow,
+      })
       await discordBot.start()
       console.log("[finn] discord bot started")
     } catch (err) {
