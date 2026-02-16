@@ -191,16 +191,55 @@ export async function createDiscordBot(
           return
         }
 
-        threadRunStore.touchPending({
-          threadId: channelId,
-          runId,
-          stepId: RUN_LEVEL_GATE_STEP_ID,
-        })
-        const prompt = requirementsFlow.start(channelId, runId)
-        // Reply visibly (not ephemeral) so the conversation is public in the thread
+        // Reply first so we have a message to create a thread from
         if (typeof interaction.reply === "function") {
           await interaction.reply({
-            content: `🚀 **Starting requirements interview** for \`${runId}\`\n\n**${prompt.phase}**\n${prompt.question}`,
+            content: `🚀 **Starting requirements interview** for \`${runId}\``,
+          })
+        }
+
+        // Create a thread from the reply message
+        try {
+          const reply = await (interaction as any).fetchReply?.()
+          if (reply && typeof reply.startThread === "function") {
+            const thread = await reply.startThread({
+              name: `📋 ${projectName || runId}`,
+              autoArchiveDuration: 1440, // 24h
+            })
+            const threadId = thread.id ?? channelId
+
+            threadRunStore.touchPending({
+              threadId,
+              runId,
+              stepId: RUN_LEVEL_GATE_STEP_ID,
+            })
+            const prompt = requirementsFlow.start(threadId, runId)
+            await thread.send(`**${prompt.phase}**\n${prompt.question}`)
+            logger.info(`[discord-bot] created interview thread ${threadId} for ${runId}`)
+          } else {
+            // Fallback: no thread, run in channel
+            threadRunStore.touchPending({
+              threadId: channelId,
+              runId,
+              stepId: RUN_LEVEL_GATE_STEP_ID,
+            })
+            const prompt = requirementsFlow.start(channelId, runId)
+            const fetchedReply = await (interaction as any).followUp?.({
+              content: `**${prompt.phase}**\n${prompt.question}`,
+            })
+            logger.info(`[discord-bot] fallback: interview in channel ${channelId} for ${runId}`)
+          }
+        } catch (threadErr) {
+          logger.error("[discord-bot] failed to create interview thread", threadErr)
+          // Still start interview in channel as fallback
+          threadRunStore.touchPending({
+            threadId: channelId,
+            runId,
+            stepId: RUN_LEVEL_GATE_STEP_ID,
+          })
+          const prompt = requirementsFlow.start(channelId, runId)
+          await (interaction as any).followUp?.({
+            content: `**${prompt.phase}**\n${prompt.question}`,
           })
         }
       }
