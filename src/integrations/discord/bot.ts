@@ -391,7 +391,7 @@ async function replyEphemeral(
   components?: unknown[],
 ): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, ephemeral: true, components })
+    await interaction.followUp({ content, flags: [1 << 6], components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
@@ -399,7 +399,7 @@ async function replyEphemeral(
     return
   }
   if (typeof interaction.reply === "function") {
-    await interaction.reply({ content, ephemeral: true, components })
+    await interaction.reply({ content, flags: [1 << 6], components })
   }
 }
 

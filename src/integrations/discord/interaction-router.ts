@@ -225,12 +225,12 @@ async function respondEphemeral(
   components?: DiscordActionRowComponentV2[],
 ): Promise<void> {
   if (interaction.replied && typeof interaction.followUp === "function") {
-    await interaction.followUp({ content, ephemeral: true, components })
+    await interaction.followUp({ content, flags: [1 << 6], components })
     return
   }
   if (interaction.deferred && typeof interaction.editReply === "function") {
     await interaction.editReply({ content, components })
     return
   }
-  await interaction.reply({ content, ephemeral: true, components })
+  await interaction.reply({ content, flags: [1 << 6], components })
 }
