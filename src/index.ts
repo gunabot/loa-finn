@@ -12,6 +12,7 @@ import { runRecovery } from "./persistence/recovery.js"
 import { WALPruner } from "./persistence/pruner.js"
 import { createApp } from "./gateway/server.js"
 import { DiscordBridge } from "./gateway/discord-bridge.js"
+import { createDiscordBot, type DiscordBotLifecycle } from "./integrations/discord/bot.js"
 import { handleWebSocket } from "./gateway/ws.js"
 import { validateWsToken } from "./gateway/auth.js"
 import { Scheduler } from "./scheduler/scheduler.js"
@@ -428,6 +429,19 @@ async function main() {
     console.log("[finn] discord bridge disabled (set DISCORD_ENABLED=true to enable)")
   }
 
+  // 6h. Initialize Discord bot runtime (slice 4)
+  let discordBot: DiscordBotLifecycle | undefined
+  if (config.discord.enabled) {
+    try {
+      discordBot = await createDiscordBot(config)
+      await discordBot.start()
+      console.log("[finn] discord bot started")
+    } catch (err) {
+      console.error("[finn] discord bot failed to start (non-fatal):", err)
+      discordBot = undefined
+    }
+  }
+
   // 7. Create gateway (with executor for sandbox, pool for health stats)
   const { app, router } = createApp(config, {
     activityFeed,
@@ -635,6 +649,11 @@ async function main() {
     // Shutdown sidecar (Phase 3)
     if (sidecarManager) {
       try { await sidecarManager.stop() } catch (err) { console.error("[finn] sidecar shutdown error:", err) }
+    }
+
+    // Shutdown Discord bot
+    if (discordBot) {
+      try { await discordBot.stop() } catch (err) { console.error("[finn] discord bot shutdown error:", err) }
     }
 
     // Shutdown worker pool (abort running, terminate workers)
