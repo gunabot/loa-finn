@@ -206,6 +206,16 @@ export class RequirementsFlow {
     return this.sessions.has(keyOf(threadId, runId))
   }
 
+  /** Find the active (non-completed) run ID for a thread, if any. */
+  findActiveRunId(threadId: string): string | null {
+    for (const [key, state] of this.sessions) {
+      if (key.startsWith(`${threadId}::`) && !state.completed) {
+        return state.runId
+      }
+    }
+    return null
+  }
+
   getState(threadId: string, runId: string): RequirementsSessionState | null {
     const state = this.sessions.get(keyOf(threadId, runId))
     return state ? cloneState(state) : null

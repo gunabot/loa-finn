@@ -184,10 +184,10 @@ export async function createDiscordBot(
       if (interaction.isChatInputCommand?.() && interaction.commandName === "requirements") {
         const projectName = interaction.options?.getString("project", false)
         const runId = projectName
-          ? `run-${projectName.replace(/\s+/g, "-").toLowerCase()}`
-          : deriveRunIdFromChannel(channelId)
-        if (!runId || !channelId) {
-          await replyEphemeral(interaction, "Could not determine project context.")
+          ? projectName.replace(/\s+/g, "-").toLowerCase()
+          : `project-${Date.now()}`
+        if (!channelId) {
+          await replyEphemeral(interaction, "Could not determine channel context.")
           return
         }
 
@@ -197,15 +197,12 @@ export async function createDiscordBot(
           stepId: RUN_LEVEL_GATE_STEP_ID,
         })
         const prompt = requirementsFlow.start(channelId, runId)
-        const workflowControls = buildWorkflowActionRows({
-          threadId: channelId,
-          runId,
-        })
-        await replyEphemeral(
-          interaction,
-          formatInterviewPrompt(prompt.phase, prompt.question),
-          workflowControls,
-        )
+        // Reply visibly (not ephemeral) so the conversation is public in the thread
+        if (typeof interaction.reply === "function") {
+          await interaction.reply({
+            content: `🚀 **Starting requirements interview** for \`${runId}\`\n\n**${prompt.phase}**\n${prompt.question}`,
+          })
+        }
       }
     } catch (error) {
       logger.error("[discord-bot] interactionCreate handler failed", error)
@@ -225,31 +222,30 @@ export async function createDiscordBot(
       await handleVoiceAttachments(message, voiceService)
 
       // In an active interview thread, treat any message as an interview answer
-      const runId = deriveRunIdFromChannel(channelId)
-      const hasActiveInterview = requirementsFlow.hasSession(channelId, runId)
+      const activeRunId = requirementsFlow.findActiveRunId(channelId)
       
-      if (hasActiveInterview && (message.content ?? "").trim()) {
+      if (activeRunId && (message.content ?? "").trim()) {
         const answerText = (message.content ?? "").trim()
-        const result = requirementsFlow.answer(channelId, runId, answerText)
+        const result = requirementsFlow.answer(channelId, activeRunId, answerText)
         if (!result.accepted) {
           await message.reply?.({ content: "I need a bit more detail — could you elaborate?" })
           return
         }
-        const workflowControls = buildWorkflowActionRows({
-          threadId: channelId,
-          runId,
-        })
         if (result.completed) {
-          const summary = requirementsFlow.buildSummary(channelId, runId)
+          const summary = requirementsFlow.buildSummary(channelId, activeRunId)
+          const workflowControls = buildWorkflowActionRows({
+            threadId: channelId,
+            runId: activeRunId,
+          })
           await message.reply?.({
-            content: `${summary}\n\n✅ Interview complete. Review the summary above, then use the buttons to approve or request changes.`,
+            content: `${summary}\n\n✅ **Interview complete!** Review the summary above, then use the buttons to approve or request changes.`,
             components: workflowControls,
           })
           return
         }
+        // During interview: just ask the next question, no workflow buttons
         await message.reply?.({
-          content: formatInterviewPrompt(result.prompt!.phase, result.prompt!.question),
-          components: workflowControls,
+          content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
         })
       }
     } catch (error) {
