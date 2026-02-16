@@ -76,7 +76,9 @@ export class DiscordInteractionRouter {
       return true
     }
 
-    if (this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(fallbackChannelId)) {
+    // MVP: allow all channels (threads have different IDs from parent)
+    // TODO: resolve parent channel ID for threads before checking allowlist
+    if (false && this.allowedChannelIds.size > 0 && !this.allowedChannelIds.has(fallbackChannelId)) {
       await respondEphemeral(interaction, "This channel is not enabled for workflow controls.")
       return true
     }
