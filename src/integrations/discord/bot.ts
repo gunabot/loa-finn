@@ -272,12 +272,18 @@ export async function createDiscordBot(
         }
         if (result.completed) {
           const summary = requirementsFlow.buildSummary(channelId, activeRunId)
+          // Split summary into Discord-safe chunks (max 2000 chars)
+          const chunks = splitMessage(summary, 1900)
+          for (const chunk of chunks) {
+            await message.reply?.({ content: chunk })
+          }
+          // Final message with gate buttons
           const workflowControls = buildWorkflowActionRows({
             threadId: channelId,
             runId: activeRunId,
           })
           await message.reply?.({
-            content: `${summary}\n\n✅ **Interview complete!** Review the summary above, then use the buttons to approve or request changes.`,
+            content: `✅ **Interview complete!** Review the summary above, then use the buttons to approve the PRD or request changes.`,
             components: workflowControls,
           })
           return
@@ -285,8 +291,13 @@ export async function createDiscordBot(
         // When entering SUMMARY phase, show the draft summary before the question
         if (result.prompt!.phase === "SUMMARY") {
           const draftSummary = requirementsFlow.buildSummary(channelId, activeRunId)
+          const fullText = `📝 **Draft Summary**\n\n${draftSummary}`
+          const chunks = splitMessage(fullText, 1900)
+          for (const chunk of chunks) {
+            await message.reply?.({ content: chunk })
+          }
           await message.reply?.({
-            content: `📝 **Draft Summary**\n\n${draftSummary}\n\n---\n**${result.prompt!.phase}**\n${result.prompt!.question}`,
+            content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
           })
         } else {
           await message.reply?.({
@@ -455,4 +466,23 @@ async function safeInteractionErrorReply(interaction: DiscordInteractionLike): P
 
 function formatInterviewPrompt(phase: string, question: string): string {
   return `Interview phase ${phase}\n${question}`
+}
+
+/** Split a message into chunks that fit Discord's 2000-char limit. */
+function splitMessage(text: string, maxLen: number): string[] {
+  if (text.length <= maxLen) return [text]
+  const chunks: string[] = []
+  let remaining = text
+  while (remaining.length > 0) {
+    if (remaining.length <= maxLen) {
+      chunks.push(remaining)
+      break
+    }
+    // Try to split at a newline
+    let splitAt = remaining.lastIndexOf("\n", maxLen)
+    if (splitAt < maxLen * 0.5) splitAt = maxLen // no good newline, hard cut
+    chunks.push(remaining.slice(0, splitAt))
+    remaining = remaining.slice(splitAt).replace(/^\n/, "")
+  }
+  return chunks
 }
