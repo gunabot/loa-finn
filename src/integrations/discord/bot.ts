@@ -282,10 +282,17 @@ export async function createDiscordBot(
           })
           return
         }
-        // During interview: just ask the next question, no workflow buttons
-        await message.reply?.({
-          content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
-        })
+        // When entering SUMMARY phase, show the draft summary before the question
+        if (result.prompt!.phase === "SUMMARY") {
+          const draftSummary = requirementsFlow.buildSummary(channelId, activeRunId)
+          await message.reply?.({
+            content: `📝 **Draft Summary**\n\n${draftSummary}\n\n---\n**${result.prompt!.phase}**\n${result.prompt!.question}`,
+          })
+        } else {
+          await message.reply?.({
+            content: `**${result.prompt!.phase}**\n${result.prompt!.question}`,
+          })
+        }
       }
     } catch (error) {
       logger.error("[discord-bot] messageCreate handler failed", error)
