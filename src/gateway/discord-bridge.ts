@@ -106,18 +106,33 @@ export class DiscordBridge {
   }
 
   /**
-   * Slice 1 stub.
-   * TODO: Replace with real Ed25519 verification using Discord public key.
+   * Verify Discord interaction signature using Ed25519.
+   * See: https://discord.com/developers/docs/interactions/receiving-and-responding#security-and-authorization
    */
   verifySignature(request: DiscordInteractionRequest): boolean {
     if (request.headers.debugSignatureBypass === "1") return true
 
-    // Basic shape checks so we fail closed by default.
-    return Boolean(
-      request.headers.signatureEd25519
-      && request.headers.signatureTimestamp
-      && this.config.publicKey,
-    ) && false
+    const { signatureEd25519, signatureTimestamp } = request.headers
+    if (!signatureEd25519 || !signatureTimestamp || !this.config.publicKey) {
+      return false
+    }
+
+    try {
+      const crypto = require("node:crypto")
+      const rawKey = Buffer.from(this.config.publicKey, "hex")
+      // Wrap raw 32-byte Ed25519 public key in SPKI DER envelope
+      const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex")
+      const keyObj = crypto.createPublicKey({
+        key: Buffer.concat([ED25519_SPKI_PREFIX, rawKey]),
+        format: "der",
+        type: "spki",
+      })
+      const signatureBytes = Buffer.from(signatureEd25519, "hex")
+      const message = Buffer.from(signatureTimestamp + request.rawBody)
+      return crypto.verify(null, message, keyObj, signatureBytes)
+    } catch {
+      return false
+    }
   }
 
   async handleInteraction(request: DiscordInteractionRequest): Promise<DiscordInteractionResponse> {
