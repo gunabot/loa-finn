@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@0xhoneyjar/loa-hounfour':
-        specifier: github:0xHoneyJar/loa-hounfour#v1.1.0
-        version: https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/9794190521be1217d7f99305c98e9f5f5b36c43c
+        specifier: github:0xHoneyJar/loa-hounfour#e5b9f16c60a95f7940c96af3b11cf50065abe898
+        version: https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/e5b9f16c60a95f7940c96af3b11cf50065abe898
       '@aws-sdk/client-s3':
         specifier: ^3.985.0
         version: 3.985.0
@@ -46,11 +46,14 @@ importers:
         version: 8.19.0
     devDependencies:
       '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.9
+        specifier: ^25.2.3
+        version: 25.2.3
       '@types/ws':
         specifier: ^8.18.1
         version: 8.18.1
+      fast-check:
+        specifier: ^4.5.3
+        version: 4.5.3
       tsx:
         specifier: ^4.0.0
         version: 4.21.0
@@ -59,13 +62,13 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.0.18
-        version: 4.0.18(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2)
+        version: 4.0.18(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
 packages:
 
-  '@0xhoneyjar/loa-hounfour@https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/9794190521be1217d7f99305c98e9f5f5b36c43c':
-    resolution: {tarball: https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/9794190521be1217d7f99305c98e9f5f5b36c43c}
-    version: 1.1.0
+  '@0xhoneyjar/loa-hounfour@https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/e5b9f16c60a95f7940c96af3b11cf50065abe898':
+    resolution: {tarball: https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/e5b9f16c60a95f7940c96af3b11cf50065abe898}
+    version: 5.0.0
     engines: {node: '>=22'}
 
   '@anthropic-ai/sdk@0.73.0':
@@ -606,6 +609,10 @@ packages:
   '@mistralai/mistralai@1.10.0':
     resolution: {integrity: sha512-tdIgWs4Le8vpvPiUEWne6tK0qbVc+jMenujnvTqOjogrJUsCSQhus0tHTU1avDDh5//Rq2dFgP9mWRAdIEoBqg==}
 
+  '@noble/hashes@2.0.1':
+    resolution: {integrity: sha512-XlOlEbQcE9fmuXxrVTXCTlG2nlRXa9Rj3rr5Ue/+tX+nmkgbX720YHh0VR3hBF9xDvwnb8D2shVGOwNx+ulArw==}
+    engines: {node: '>= 20.19.0'}
+
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
     engines: {node: '>=14'}
@@ -1044,8 +1051,8 @@ packages:
   '@types/mime-types@2.1.4':
     resolution: {integrity: sha512-lfU4b34HOri+kAY5UheuFMWPDOI+OPceBSHZKp69gEyTL/mmJ4cnU6Y/rlme3UL3GyOn6Y42hyIEw0/q8sWx5w==}
 
-  '@types/node@22.19.9':
-    resolution: {integrity: sha512-PD03/U8g1F9T9MI+1OBisaIARhSzeidsUjQaf51fOxrfjeiKN9bLVO06lHuHYjxdnqLWJijJHfqXPSJri2EM2A==}
+  '@types/node@25.2.3':
+    resolution: {integrity: sha512-m0jEgYlYz+mDJZ2+F4v8D1AyQb+QzsNqRuI7xg1VQX/KlKS0qT9r1Mo16yo5F/MtifXFgaofIFsdFMox2SxIbQ==}
 
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
@@ -1254,6 +1261,10 @@ packages:
 
   extend@3.0.2:
     resolution: {integrity: sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==}
+
+  fast-check@4.5.3:
+    resolution: {integrity: sha512-IE9csY7lnhxBnA8g/WI5eg/hygA6MGWJMSNfFRrBlXUciADEhS1EDB0SIsMSvzubzIlOBbVITSsypCsW717poA==}
+    engines: {node: '>=12.17.0'}
 
   fast-deep-equal@3.1.3:
     resolution: {integrity: sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==}
@@ -1565,6 +1576,9 @@ packages:
   proxy-from-env@1.1.0:
     resolution: {integrity: sha512-D+zkORCbA9f1tdWRK0RaCR3GPv50cMxcrz4X8k5LTSUD1Dkw47mKJEZQNunItRTkWwgtaUSo1RVFRIG9ZXiFYg==}
 
+  pure-rand@7.0.1:
+    resolution: {integrity: sha512-oTUZM/NAZS8p7ANR3SHh30kXB+zK2r2BPcEn/awJIbOvq82WoMN4p62AWWp3Hhw50G0xMsw1mhIBLqHw64EcNQ==}
+
   require-directory@2.1.1:
     resolution: {integrity: sha512-fGxEI7+wsG9xrvdjsrlmL22OMTTiHRwAMroiEeMgq8gzoLC/PQr7RsRDSTLUg/bZAZtF+TVIkHc6/4RIKrui+Q==}
     engines: {node: '>=0.10.0'}
@@ -1713,8 +1727,8 @@ packages:
     resolution: {integrity: sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==}
     hasBin: true
 
-  undici-types@6.21.0:
-    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
+  undici-types@7.16.0:
+    resolution: {integrity: sha512-Zz+aZWSj8LE6zoxD+xrjh4VfkIG8Ya6LvYkZqtUQGJPZjYl53ypCaUwWqo7eI0x66KBGeRo+mlBEkMSeSZ38Nw==}
 
   undici@7.21.0:
     resolution: {integrity: sha512-Hn2tCQpoDt1wv23a68Ctc8Cr/BHpUSfaPYrkajTXOS9IKpxVRx/X5m1K2YkbK2ipgZgxXSgsUinl3x+2YdSSfg==}
@@ -1859,8 +1873,9 @@ packages:
 
 snapshots:
 
-  '@0xhoneyjar/loa-hounfour@https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/9794190521be1217d7f99305c98e9f5f5b36c43c':
+  '@0xhoneyjar/loa-hounfour@https://codeload.github.com/0xHoneyJar/loa-hounfour/tar.gz/e5b9f16c60a95f7940c96af3b11cf50065abe898':
     dependencies:
+      '@noble/hashes': 2.0.1
       '@sinclair/typebox': 0.34.48
       jose: 6.1.3
 
@@ -2928,6 +2943,8 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.25.1(zod@3.25.76)
 
+  '@noble/hashes@2.0.1': {}
+
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
@@ -3477,13 +3494,13 @@ snapshots:
 
   '@types/mime-types@2.1.4': {}
 
-  '@types/node@22.19.9':
+  '@types/node@25.2.3':
     dependencies:
-      undici-types: 6.21.0
+      undici-types: 7.16.0
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 22.19.9
+      '@types/node': 25.2.3
 
   '@vitest/expect@4.0.18':
     dependencies:
@@ -3494,13 +3511,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.0.3
 
-  '@vitest/mocker@4.0.18(vite@7.3.1(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2))':
+  '@vitest/mocker@4.0.18(vite@7.3.1(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2))':
     dependencies:
       '@vitest/spy': 4.0.18
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.1(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2)
+      vite: 7.3.1(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
 
   '@vitest/pretty-format@4.0.18':
     dependencies:
@@ -3689,6 +3706,10 @@ snapshots:
   expect-type@1.3.0: {}
 
   extend@3.0.2: {}
+
+  fast-check@4.5.3:
+    dependencies:
+      pure-rand: 7.0.1
 
   fast-deep-equal@3.1.3: {}
 
@@ -4002,7 +4023,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.0
-      '@types/node': 22.19.9
+      '@types/node': 25.2.3
       long: 5.3.2
 
   proxy-agent@6.5.0:
@@ -4019,6 +4040,8 @@ snapshots:
       - supports-color
 
   proxy-from-env@1.1.0: {}
+
+  pure-rand@7.0.1: {}
 
   require-directory@2.1.1: {}
 
@@ -4173,11 +4196,11 @@ snapshots:
 
   ulid@3.0.2: {}
 
-  undici-types@6.21.0: {}
+  undici-types@7.16.0: {}
 
   undici@7.21.0: {}
 
-  vite@7.3.1(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2):
+  vite@7.3.1(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2):
     dependencies:
       esbuild: 0.27.3
       fdir: 6.5.0(picomatch@4.0.3)
@@ -4186,15 +4209,15 @@ snapshots:
       rollup: 4.57.1
       tinyglobby: 0.2.15
     optionalDependencies:
-      '@types/node': 22.19.9
+      '@types/node': 25.2.3
       fsevents: 2.3.3
       tsx: 4.21.0
       yaml: 2.8.2
 
-  vitest@4.0.18(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2):
+  vitest@4.0.18(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2):
     dependencies:
       '@vitest/expect': 4.0.18
-      '@vitest/mocker': 4.0.18(vite@7.3.1(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2))
+      '@vitest/mocker': 4.0.18(vite@7.3.1(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2))
       '@vitest/pretty-format': 4.0.18
       '@vitest/runner': 4.0.18
       '@vitest/snapshot': 4.0.18
@@ -4211,10 +4234,10 @@ snapshots:
       tinyexec: 1.0.2
       tinyglobby: 0.2.15
       tinyrainbow: 3.0.3
-      vite: 7.3.1(@types/node@22.19.9)(tsx@4.21.0)(yaml@2.8.2)
+      vite: 7.3.1(@types/node@25.2.3)(tsx@4.21.0)(yaml@2.8.2)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 22.19.9
+      '@types/node': 25.2.3
     transitivePeerDependencies:
       - jiti
       - less
